@@ -6,7 +6,7 @@ import math
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QObject, QRectF, Qt
-from PyQt6.QtWidgets import QComboBox, QMenu, QWidget
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QMenu, QWidget
 
 from afm_gui.core.scan_modes import ScanModeConfig
 from afm_gui.ui.panels.channel_images import build_channel_images_panel, create_channel_view
@@ -41,6 +41,7 @@ class ChannelImagesModule(QObject):
         self.line_channel_selector = None
         self.line_pass_selector = None
         self.position_label = None
+        self.channel_aliases: dict[str, str] = {}
 
     @property
     def current_mode(self) -> ScanModeConfig:
@@ -58,11 +59,12 @@ class ChannelImagesModule(QObject):
     def display_metadata(self) -> dict[str, object]:
         return {
             "display_count": self.display_count.value(),
-            "display_channels": tuple(selector.currentText() for selector in self.image_selectors()),
+            "display_channels": tuple(self._selector_channel(selector) for selector in self.image_selectors()),
             "display_passes": tuple(selector.currentText() for selector in self.image_pass_selectors()),
             "display_flatten_modes": tuple(selector.currentText() for selector in self.image_flatten_selectors()),
             "display_colormaps": tuple(str(view.get("colormap", "")) for view in self.channel_views),
-            "line_channel": self.line_channel_selector.currentText(),
+            "display_ranges": tuple(self._range_metadata(view) for view in self.channel_views),
+            "line_channel": self._selector_channel(self.line_channel_selector),
             "line_pass": self.line_pass_selector.currentText(),
         }
 
@@ -113,12 +115,12 @@ class ChannelImagesModule(QObject):
                 or not isinstance(image_item, pg.ImageItem)
             ):
                 continue
-            channel = selector.currentText()
+            channel = self._selector_channel(selector)
             scan_pass = pass_selector.currentText()
             if changed_pairs is not None and (scan_pass, channel) not in changed_pairs:
                 continue
             if scan_pass in self.latest_images and channel in self.latest_images[scan_pass]:
-                self.set_image(image_item, self.display_image_for_view(view, self.latest_images[scan_pass][channel]))
+                self.set_image(view, self.display_image_for_view(view, self.latest_images[scan_pass][channel]))
 
     def display_image_for_view(self, view: dict[str, object], image: np.ndarray) -> np.ndarray:
         flatten_selector = view.get("flatten_selector")
@@ -153,38 +155,137 @@ class ChannelImagesModule(QObject):
         return arr
 
     def refresh_line_channel(self) -> None:
-        channel = self.line_channel_selector.currentText()
+        channel = self._selector_channel(self.line_channel_selector)
         scan_pass = self.line_pass_selector.currentText()
         if scan_pass in self.latest_lines and channel in self.latest_lines[scan_pass]:
             self.line_curve.setData(self.latest_lines[scan_pass][channel])
 
-    def set_image(self, image_item: pg.ImageItem, image: np.ndarray) -> None:
+    def set_image(self, view: dict[str, object], image: np.ndarray) -> None:
+        image_item = view.get("image_item")
+        if not isinstance(image_item, pg.ImageItem):
+            return
         xc, yc, width, height = self._geometry_provider()
         arr = np.nan_to_num(image, nan=0.0)
         image_item.setRect(QRectF(xc - width / 2.0, yc - height / 2.0, width, height))
-        image_item.setImage(arr.T, autoLevels=True)
+        levels = self._levels_for_view(view, arr)
+        image_item.setImage(arr.T, autoLevels=levels is None, levels=levels)
+        histogram = view.get("histogram")
+        if isinstance(histogram, pg.HistogramLUTWidget) and levels is not None:
+            histogram.item.setLevels(*levels)
+
+    def _levels_for_view(self, view: dict[str, object], image: np.ndarray) -> tuple[float, float] | None:
+        auto = view.get("range_auto")
+        auto_enabled = not isinstance(auto, QCheckBox) or auto.isChecked()
+        if auto_enabled:
+            levels = self._finite_min_max(image)
+            if levels is not None:
+                self._show_auto_levels(view, levels)
+            return None
+        minimum = self._spin_value(view.get("range_min"), 0.0)
+        maximum = self._spin_value(view.get("range_max"), 1.0)
+        if maximum <= minimum:
+            maximum = minimum + 1e-12
+        return float(minimum), float(maximum)
+
+    def _show_auto_levels(self, view: dict[str, object], levels: tuple[float, float]) -> None:
+        minimum_spin = view.get("range_min")
+        maximum_spin = view.get("range_max")
+        if not isinstance(minimum_spin, QDoubleSpinBox) or not isinstance(maximum_spin, QDoubleSpinBox):
+            return
+        minimum, maximum = levels
+        minimum_spin.blockSignals(True)
+        maximum_spin.blockSignals(True)
+        minimum_spin.setValue(minimum)
+        maximum_spin.setValue(maximum)
+        minimum_spin.blockSignals(False)
+        maximum_spin.blockSignals(False)
+
+    def _range_metadata(self, view: dict[str, object]) -> dict[str, float | str]:
+        auto = view.get("range_auto")
+        mode = "auto" if not isinstance(auto, QCheckBox) or auto.isChecked() else "manual"
+        return {
+            "mode": mode,
+            "min": self._spin_value(view.get("range_min"), 0.0),
+            "max": self._spin_value(view.get("range_max"), 1.0),
+        }
+
+    @staticmethod
+    def _spin_value(widget: object, default: float) -> float:
+        if isinstance(widget, QDoubleSpinBox):
+            return float(widget.value())
+        return float(default)
+
+    @staticmethod
+    def _finite_min_max(image: np.ndarray) -> tuple[float, float] | None:
+        finite = image[np.isfinite(image)]
+        if finite.size == 0:
+            return None
+        minimum = float(np.min(finite))
+        maximum = float(np.max(finite))
+        if maximum <= minimum:
+            maximum = minimum + 1e-12
+        return minimum, maximum
 
     def sync_channel_selectors(self, channels: object) -> None:
         names = list(channels)
         for selector in [self.line_channel_selector, *self.image_selectors()]:
-            current = selector.currentText()
-            existing = [selector.itemText(i) for i in range(selector.count())]
+            current = self._selector_channel(selector)
+            existing = [self._item_channel(selector, i) for i in range(selector.count())]
             if names == existing:
+                self._refresh_selector_labels(selector)
                 continue
             selector.blockSignals(True)
             selector.clear()
-            selector.addItems(names)
+            for name in names:
+                selector.addItem(self._display_channel_name(name), name)
             if current in names:
-                selector.setCurrentText(current)
+                self._set_selector_channel(selector, current)
             selector.blockSignals(False)
 
     def assign_default_view_channels(self, mode: ScanModeConfig) -> None:
         for index, selector in enumerate(self.image_selectors()):
             if index < len(mode.channel_names):
-                selector.setCurrentText(mode.channel_names[index])
+                self._set_selector_channel(selector, mode.channel_names[index])
         if mode.channel_names:
-            self.line_channel_selector.setCurrentText(mode.channel_names[0])
+            self._set_selector_channel(self.line_channel_selector, mode.channel_names[0])
         self.line_pass_selector.setCurrentText("trace")
+
+    def set_channel_aliases(self, aliases: dict[str, str]) -> None:
+        self.channel_aliases = dict(aliases)
+        self.sync_channel_selectors(self.available_image_channels() or self.current_mode.channel_names)
+        self.refresh_image_views()
+        self.refresh_line_channel()
+
+    def _display_channel_name(self, channel: str) -> str:
+        return self.channel_aliases.get(channel, channel)
+
+    def _selector_channel(self, selector: QComboBox) -> str:
+        data = selector.currentData()
+        if data is not None:
+            return str(data)
+        return selector.currentText()
+
+    def _item_channel(self, selector: QComboBox, index: int) -> str:
+        data = selector.itemData(index)
+        if data is not None:
+            return str(data)
+        return selector.itemText(index)
+
+    def _set_selector_channel(self, selector: QComboBox, channel: str) -> None:
+        index = selector.findData(channel)
+        if index >= 0:
+            selector.setCurrentIndex(index)
+            return
+        selector.setCurrentText(channel)
+
+    def _refresh_selector_labels(self, selector: QComboBox) -> None:
+        current = self._selector_channel(selector)
+        selector.blockSignals(True)
+        for index in range(selector.count()):
+            channel = self._item_channel(selector, index)
+            selector.setItemText(index, self._display_channel_name(channel))
+        self._set_selector_channel(selector, current)
+        selector.blockSignals(False)
 
     def set_display_count(self, count: int) -> None:
         while len(self.channel_views) > count:
@@ -343,6 +444,16 @@ class ChannelImagesModule(QObject):
         self.apply_colormap(histogram, name)
 
     def _refresh_image_views(self) -> None:
+        self.refresh_image_views()
+
+    def _set_view_auto_range(self, index: int, checked: bool) -> None:
+        if index < 0 or index >= len(self.channel_views):
+            return
+        view = self.channel_views[index]
+        for key in ("range_min", "range_max"):
+            widget = view.get(key)
+            if isinstance(widget, QDoubleSpinBox):
+                widget.setEnabled(not checked)
         self.refresh_image_views()
 
     def _set_shared_roi_from_points(self, x0: float, y0: float, x1: float, y1: float) -> None:

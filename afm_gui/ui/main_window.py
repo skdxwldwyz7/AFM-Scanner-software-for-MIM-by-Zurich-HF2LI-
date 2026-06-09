@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from importlib import resources
-import threading
+from pathlib import Path
 
 from pyqtgraph.dockarea import Dock, DockArea
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import (
     QGroupBox,
-    QFileDialog,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QSpinBox,
     QWidget,
@@ -20,12 +16,16 @@ from PyQt6.QtWidgets import (
 
 from afm_gui.core.scan_config import ScanDirection
 from afm_gui.core.scan_controller import ScanController
+from afm_gui.core.lockin_acquisition import LockinScanAcquisition, ZeroScanAcquisition
 from afm_gui.device.scan_device import AdapterScannerDevice
+from afm_gui.ui.modules.approach import ApproachModule
 from afm_gui.ui.modules.channel_images import ChannelImagesModule
 from afm_gui.ui.modules.device import DeviceModule
+from afm_gui.ui.modules.layout import WindowLayoutModule
 from afm_gui.ui.modules.lockin import LockInModule
 from afm_gui.ui.modules.metadata import MetadataModule
 from afm_gui.ui.modules.scan import ScanModule
+from afm_gui.ui.modules.scan_sequence import ScanSequenceModule
 from afm_gui.ui.modules.spectroscopy import SpectroscopyModule
 from afm_gui.ui.modules.stage import StageModule
 from afm_gui.ui.modules.storage import StorageModule
@@ -68,9 +68,11 @@ class MainWindow(QMainWindow):
         self.scan_module.set_mode_changed_callback(self.channel_images_module.reset_for_mode)
         self.stage_module = StageModule(self._append_log, self.device_manager, self)
         self.lockin_module = LockInModule(self._append_log, self.device_manager, self)
+        self.approach_module = ApproachModule(self._append_log, self.device_manager, self)
         self.storage_module = StorageModule(
             self.controller,
             lambda: self.scan_module.current_mode,
+            self._scan_extra_metadata,
             self._append_log,
             self,
             self,
@@ -82,12 +84,17 @@ class MainWindow(QMainWindow):
             self,
             self,
         )
+        self.scan_sequence_module = ScanSequenceModule(
+            self.controller,
+            lambda direction: self.scan_module.start(direction),
+            self._append_log,
+            self,
+        )
         self.stage_controller = self.stage_module.controller
         self.lockin_controllers = self.lockin_module.controllers
         self.lockin_controller = self.lockin_module.primary_controller
         self.panel_actions: dict[str, QAction] = {}
         self.panels: dict[str, dict[str, object]] = {}
-        self._floating_panel_windows: dict[QWidget, str] = {}
         self.default_layout_state: dict[str, object] = {}
 
         self._build_ui()
@@ -104,9 +111,10 @@ class MainWindow(QMainWindow):
         self.line_dock = Dock("Line Plot", size=(820, 180))
         self.parameter_dock = Dock("Scan Parameters", size=(360, 430))
         self.control_dock = Dock("Controls", size=(360, 120))
-        self.device_dock = Dock("Device Manager", size=(820, 180))
+        self.device_dock = Dock("Device Manager", size=(900, 520))
         self.stage_dock = Dock("Stage Map", size=(360, 430))
-        self.lockin_dock = Dock("Lock-in Amplifier", size=(980, 520))
+        self.lockin_dock = Dock("Lock-in Amplifier", size=(760, 420))
+        self.approach_dock = Dock("Approach", size=(760, 520))
         self.spectroscopy_dock = Dock("Spectroscopy", size=(980, 560))
         self.status_dock = Dock("State", size=(820, 160))
         self.metadata_dock = Dock("Parameter Tree", size=(360, 280))
@@ -119,10 +127,18 @@ class MainWindow(QMainWindow):
         self.device_dock.addWidget(self._device_manager_box())
         self.stage_dock.addWidget(self._stage_map_box())
         self.lockin_dock.addWidget(self._lockin_box())
+        self.approach_dock.addWidget(self._approach_box())
         self.spectroscopy_dock.addWidget(self._spectroscopy_box())
         self.status_dock.addWidget(self._status_box())
         self.metadata_dock.addWidget(self._metadata_box())
         self.log_dock.addWidget(self._log_box())
+        self.layout_module = WindowLayoutModule(
+            self,
+            self.dock_area,
+            self._append_log,
+            startup_layout=self.STARTUP_LAYOUT,
+            toggle_metadata=self.toggle_metadata,
+        )
 
         self.dock_area.addDock(self.stage_dock, "left")
         self.dock_area.addDock(self.parameter_dock, "right", self.stage_dock)
@@ -133,11 +149,12 @@ class MainWindow(QMainWindow):
         self.dock_area.addDock(self.line_dock, "bottom", self.image_dock)
         self.dock_area.addDock(self.status_dock, "bottom", self.line_dock)
         self.dock_area.addDock(self.lockin_dock, "bottom", self.status_dock)
-        self.dock_area.addDock(self.spectroscopy_dock, "bottom", self.lockin_dock)
-        self.dock_area.addDock(self.device_dock, "bottom", self.spectroscopy_dock)
+        self.dock_area.addDock(self.device_dock, "bottom", self.lockin_dock)
+        self.dock_area.addDock(self.approach_dock, "bottom", self.lockin_dock)
         self._register_panels()
         self._build_menus()
         self.default_layout_state = self.dock_area.saveState()
+        self.layout_module.default_layout_state = self.default_layout_state
         self._load_startup_layout()
 
         self.channel_images_module.bind_status_controls(
@@ -146,12 +163,20 @@ class MainWindow(QMainWindow):
             self.line_pass_selector,
             self.position_label,
         )
+        self.lockin_module.set_route_changed_callback(self.channel_images_module.set_channel_aliases)
         self.scan_module.apply_scan_mode(self.scan_module.current_mode)
         self.storage_module.bind_controls(
             self.save_gsf,
             self.auto_save_enabled,
             self.auto_save_dir,
             self.auto_save_browse,
+        )
+        self.scan_sequence_module.bind_controls(
+            self.scan_up,
+            self.scan_down,
+            self.stop,
+            self.scan_repeat_mode,
+            self.scan_repeat_count,
         )
         self.metadata_module.refresh()
         self._update_scan_button_state("Idle")
@@ -185,9 +210,9 @@ class MainWindow(QMainWindow):
                 "default_visible": False,
                 "open_floating": True,
             },
-            "spectroscopy": {
-                "title": "Spectroscopy",
-                "dock": self.spectroscopy_dock,
+            "approach": {
+                "title": "Approach",
+                "dock": self.approach_dock,
                 "position": "bottom",
                 "relative": "state",
                 "context_close": True,
@@ -209,34 +234,7 @@ class MainWindow(QMainWindow):
                 "context_close": True,
             },
         }
-        for key, panel in self.panels.items():
-            dock = panel["dock"]
-            if isinstance(dock, Dock):
-                dock.sigClosed.connect(lambda _dock, panel_key=key: self._sync_panel_action(panel_key, False))
-                if panel.get("context_close"):
-                    self._install_panel_context_menu(key, dock)
-
-    def _install_panel_context_menu(self, key: str, dock: Dock) -> None:
-        dock.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        dock.customContextMenuRequested.connect(
-            lambda position, panel_key=key, panel_dock=dock: self._show_panel_context_menu(
-                panel_key,
-                panel_dock.mapToGlobal(position),
-            )
-        )
-
-    def _show_panel_context_menu(self, key: str, global_position) -> None:
-        panel = self.panels.get(key)
-        if panel is None:
-            return
-        menu = QMenu(self)
-        close_action = menu.addAction(f"Close {panel['title']}")
-        close_action.triggered.connect(lambda _checked=False, panel_key=key: self._close_panel_from_context(panel_key))
-        menu.exec(global_position)
-
-    def _close_panel_from_context(self, key: str) -> None:
-        self._set_panel_visible(key, False)
-        self._sync_panel_action(key, False)
+        self.layout_module.register_panels(self.panels)
 
     def _build_menus(self) -> None:
         menu_bar = self.menuBar()
@@ -262,29 +260,8 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(refresh_metadata)
 
         view_menu = menu_bar.addMenu("View")
-        self.panel_actions = {}
-        for key, panel in self.panels.items():
-            action = QAction(str(panel["title"]), self)
-            action.setCheckable(True)
-            action.setChecked(True)
-            action.toggled.connect(lambda checked, panel_key=key: self._set_panel_visible(panel_key, checked))
-            view_menu.addAction(action)
-            self.panel_actions[key] = action
-
-        view_menu.addSeparator()
-        show_all = QAction("Show All Panels", self)
-        show_all.triggered.connect(self._show_all_panels)
-        view_menu.addAction(show_all)
-        restore_default = QAction("Restore Default Layout", self)
-        restore_default.triggered.connect(self._restore_default_layout)
-        view_menu.addAction(restore_default)
-        view_menu.addSeparator()
-        save_layout = QAction("Save Layout As...", self)
-        save_layout.triggered.connect(self._save_layout_as)
-        view_menu.addAction(save_layout)
-        load_layout = QAction("Load Layout...", self)
-        load_layout.triggered.connect(self._load_layout)
-        view_menu.addAction(load_layout)
+        self.layout_module.build_view_menu(view_menu)
+        self.panel_actions = self.layout_module.panel_actions
 
         help_menu = menu_bar.addMenu("Help")
         config_action = QAction("Show Scan Modes Config Path", self)
@@ -315,6 +292,9 @@ class MainWindow(QMainWindow):
     def _lockin_box(self) -> QWidget:
         return self.lockin_module.widget
 
+    def _approach_box(self) -> QWidget:
+        return self.approach_module.widget
+
     def _spectroscopy_box(self) -> QWidget:
         return self.spectroscopy_module.widget
 
@@ -325,11 +305,8 @@ class MainWindow(QMainWindow):
         return build_command_log_panel(self)
 
     def _connect(self) -> None:
-        self.scan_up.clicked.connect(lambda: self.scan_module.start(ScanDirection.UP))
-        self.scan_down.clicked.connect(lambda: self.scan_module.start(ScanDirection.DOWN))
         self.pause.clicked.connect(self.controller.pause)
         self.resume.clicked.connect(self.controller.resume)
-        self.stop.clicked.connect(self.controller.stop)
         self.toggle_metadata.clicked.connect(self._toggle_metadata)
         self.controller.image_changed.connect(
             lambda images: self.channel_images_module.show_image(
@@ -343,6 +320,7 @@ class MainWindow(QMainWindow):
         self.controller.state_changed.connect(self._on_controller_state_changed)
         self.controller.scan_progress_changed.connect(self._show_scan_progress)
         self.controller.runtime_parameters_changed.connect(lambda _: self.metadata_module.refresh())
+        self.approach_module.controller.state_changed.connect(self._on_approach_state_changed)
 
     def _on_controller_state_changed(self, state: str) -> None:
         self.state_label.setText(state)
@@ -353,6 +331,12 @@ class MainWindow(QMainWindow):
         if state == "Idle":
             self.storage_module.auto_save("finish")
             self.metadata_module.refresh()
+            self.scan_sequence_module.continue_if_needed()
+
+    def _on_approach_state_changed(self, state: str) -> None:
+        approach_locked = state in {"Approaching", "Paused"}
+        scan_locked = self.controller.is_running or self.controller.is_paused
+        self.device_module.set_hardware_locked(approach_locked or scan_locked)
 
     def _update_scan_button_state(self, state: str) -> None:
         scanning = state == "Scanning"
@@ -367,6 +351,29 @@ class MainWindow(QMainWindow):
         self.save_gsf.setEnabled(idle or paused)
         self.auto_save_browse.setEnabled(idle)
         self.auto_save_dir.setEnabled(idle)
+        self.scan_sequence_module.update_controls_enabled(idle)
+
+    def _on_scan_repeat_mode_changed(self) -> None:
+        self.scan_sequence_module.on_repeat_mode_changed()
+
+    def _start_scan_sequence(self, direction: int) -> None:
+        self.scan_sequence_module.start(direction)
+
+    def _start_next_scan_in_sequence(self) -> None:
+        self.scan_sequence_module.start_next()
+
+    def _continue_scan_sequence(self) -> None:
+        self.scan_sequence_module.continue_if_needed()
+
+    def _stop_scan_sequence(self) -> None:
+        self.scan_sequence_module.stop()
+
+    def _log_scan_sequence_status(self, direction: int) -> None:
+        self.scan_sequence_module._log_scan_status(direction)
+
+    @property
+    def _scan_sequence_active(self) -> bool:
+        return self.scan_sequence_module.active
 
     def _show_scan_progress(
         self,
@@ -392,13 +399,14 @@ class MainWindow(QMainWindow):
             **self.device_module.metadata_paths(),
             "stage": self.stage_module.snapshot(),
             "lockin": self.lockin_module.snapshot(),
+            "approach": self.approach_module.snapshot(),
         }
 
     def _scan_acquisition_callback(self):
-        adapter = self.device_manager.adapter_for_function("lockin")
-        if adapter is None or not hasattr(adapter, "read_demod"):
-            return None
-        return _LockinScanAcquisition(adapter)
+        adapters = self.lockin_module.scan_adapters()
+        if not adapters:
+            return ZeroScanAcquisition()
+        return LockinScanAcquisition(adapters, self.lockin_module.scan_routing())
 
     def _toggle_metadata(self) -> None:
         visible = self.metadata_dock.isHidden()
@@ -407,184 +415,58 @@ class MainWindow(QMainWindow):
         self.toggle_metadata.setText("Hide Metadata" if visible else "Show Metadata")
 
     def _set_panel_visible(self, key: str, visible: bool, *, allow_floating: bool = True) -> None:
-        panel = self.panels[key]
-        dock = panel["dock"]
-        if not isinstance(dock, Dock):
-            return
-
-        if visible:
-            if getattr(dock, "_container", None) is None:
-                relative_key = panel["relative"]
-                relative = self.panels[relative_key]["dock"] if relative_key else None
-                self.dock_area.addDock(dock, str(panel["position"]), relative)
-            dock.setHidden(False)
-            if allow_floating and panel.get("open_floating"):
-                dock.float()
-                self._track_floating_panel(key)
-        else:
-            if panel.get("open_floating") and self._panel_is_floating(key):
-                self._close_floating_panel(key)
-            else:
-                dock.setHidden(True)
-        if key == "metadata":
-            self.toggle_metadata.setText("Hide Metadata" if visible else "Show Metadata")
+        self.layout_module.set_panel_visible(key, visible, allow_floating=allow_floating)
 
     def _panel_is_floating(self, key: str) -> bool:
-        dock = self.panels[key]["dock"]
-        return isinstance(dock, Dock) and getattr(dock, "area", None) not in (None, self.dock_area)
+        return self.layout_module.panel_is_floating(key)
 
     def _track_floating_panel(self, key: str) -> None:
-        dock = self.panels[key]["dock"]
-        area = getattr(dock, "area", None)
-        if not isinstance(dock, Dock) or area in (None, self.dock_area):
-            return
-        window = getattr(area, "win", None)
-        if not isinstance(window, QWidget):
-            window = area.window()
-        if not isinstance(window, QWidget) or window in self._floating_panel_windows:
-            return
-        self._floating_panel_windows[window] = key
-        window.installEventFilter(self)
-        window.destroyed.connect(lambda _obj=None, watched=window: self._floating_panel_windows.pop(watched, None))
+        self.layout_module.track_floating_panel(key)
 
     def _close_floating_panel(self, key: str) -> None:
-        dock = self.panels[key]["dock"]
-        area = getattr(dock, "area", None)
-        window = getattr(area, "win", None) if area is not None else None
-        if not isinstance(window, QWidget) and area is not None:
-            window = area.window()
-        if isinstance(dock, Dock) and getattr(dock, "_container", None) is not None:
-            dock.close()
-        self._sync_panel_action(key, False)
-        if isinstance(window, QWidget):
-            window.close()
+        self.layout_module.close_floating_panel(key)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.Close and isinstance(watched, QWidget):
-            key = self._floating_panel_windows.pop(watched, None)
-            if key is not None:
-                dock = self.panels[key]["dock"]
-                if isinstance(dock, Dock) and self._panel_is_floating(key):
-                    dock.close()
-                self._sync_panel_action(key, False)
+        self.layout_module.event_filter(watched, event)
         return super().eventFilter(watched, event)
 
     def _show_all_panels(self, *, allow_floating: bool = True) -> None:
-        for key in self.panels:
-            self._set_panel_visible(key, True, allow_floating=allow_floating)
-            self._sync_panel_action(key, True)
+        self.layout_module.show_all_panels(allow_floating=allow_floating)
 
     def _restore_default_layout(self) -> None:
-        try:
-            self._apply_startup_layout()
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            self._append_log(f"Could not restore startup layout: {exc}")
-            self._restore_code_default_layout()
-            return
-        self._append_log(f"Restored startup layout: {self._startup_layout_path()}")
+        self.layout_module.restore_default_layout()
 
     def _restore_code_default_layout(self) -> None:
-        self._show_all_panels(allow_floating=False)
-        self.dock_area.restoreState(self.default_layout_state, missing="ignore")
-        self._show_all_panels(allow_floating=False)
-        self._append_log("Restored fallback layout")
+        self.layout_module.restore_code_default_layout()
 
     def _save_layout_as(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Layout",
-            str(self._layout_dir() / "layout.json"),
-            "AFM Layout (*.json)",
-        )
-        if not path:
-            return
-        payload = {
-            "schema": "afm_gui.layout.v1",
-            "dock_state": self.dock_area.saveState(),
-            "visible_panels": {
-                key: self._panel_is_visible(key)
-                for key in self.panels
-            },
-        }
-        path_obj = Path(path)
-        path_obj.parent.mkdir(parents=True, exist_ok=True)
-        path_obj.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self._append_log(f"Saved layout: {path_obj}")
+        self.layout_module.save_layout_as()
 
     def _load_layout(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Layout",
-            str(self._layout_dir()),
-            "AFM Layout (*.json)",
-        )
-        if not path:
-            return
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        try:
-            self._apply_layout_payload(payload)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Load Layout", str(exc))
-            return
-        self._append_log(f"Loaded layout: {path}")
+        self.layout_module.load_layout()
 
     def _load_startup_layout(self) -> None:
-        path = self._startup_layout_path()
-        if not path.exists():
-            self._append_log(f"Startup layout not found: {path}")
-            return
-        try:
-            self._apply_startup_layout()
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            self._append_log(f"Could not load startup layout {path}: {exc}")
-            self._restore_code_default_layout()
-            return
-        self._append_log(f"Loaded startup layout: {path}")
+        self.layout_module.load_startup_layout()
 
     def _apply_startup_layout(self) -> None:
-        path = self._startup_layout_path()
-        if not path.exists():
-            raise OSError(f"Startup layout not found: {path}")
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        self._apply_layout_payload(payload)
+        self.layout_module.apply_startup_layout()
 
     def _apply_layout_payload(self, payload: dict[str, object]) -> None:
-        if payload.get("schema") != "afm_gui.layout.v1":
-            raise ValueError("This is not an AFM GUI layout file.")
-        self._show_all_panels(allow_floating=False)
-        dock_state = payload.get("dock_state")
-        if not isinstance(dock_state, dict):
-            raise ValueError("Layout file is missing dock_state.")
-        self.dock_area.restoreState(dock_state, missing="ignore")
-        visible_panels = payload.get("visible_panels", {})
-        if not isinstance(visible_panels, dict):
-            visible_panels = {}
-        for key, panel in self.panels.items():
-            visible = bool(visible_panels.get(key, panel.get("default_visible", True)))
-            self._set_panel_visible(key, visible, allow_floating=False)
-            self._sync_panel_action(key, visible)
+        self.layout_module.apply_layout_payload(payload)
 
     def _panel_is_visible(self, key: str) -> bool:
-        dock = self.panels[key]["dock"]
-        return isinstance(dock, Dock) and getattr(dock, "_container", None) is not None and not dock.isHidden()
+        return self.layout_module.panel_is_visible(key)
 
     @classmethod
     def _startup_layout_path(cls) -> Path:
         return Path(str(resources.files("afm_gui.config").joinpath(cls.STARTUP_LAYOUT)))
 
     @staticmethod
-    def _layout_dir() -> Path:
-        return Path.home() / ".afm_gui" / "layouts"
+    def _layout_dir():
+        return WindowLayoutModule.layout_dir()
 
     def _sync_panel_action(self, key: str, visible: bool) -> None:
-        action = self.panel_actions.get(key)
-        if action is None:
-            return
-        action.blockSignals(True)
-        action.setChecked(visible)
-        action.blockSignals(False)
-        if key == "metadata":
-            self.toggle_metadata.setText("Hide Metadata" if visible else "Show Metadata")
+        self.layout_module.sync_panel_action(key, visible)
 
     def _show_config_path(self) -> None:
         QMessageBox.information(
@@ -610,6 +492,7 @@ class MainWindow(QMainWindow):
             self.device.wait_for_finished(5000)
         if hasattr(self.spectroscopy_module.controller, "stop"):
             self.spectroscopy_module.controller.stop()
+        self.approach_module.controller.abort()
         self.device_module.wait_for_connections(5000)
         self.device_module.set_hardware_locked(False)
         self.device_manager.disconnect_all()
@@ -634,30 +517,3 @@ class MainWindow(QMainWindow):
         widget.setValue(value)
         widget.setAlignment(Qt.AlignmentFlag.AlignRight)
         return widget
-
-
-class _LockinScanAcquisition:
-    def __init__(self, adapter: object) -> None:
-        self._adapter = adapter
-        self._lock = threading.Lock()
-
-    def __call__(self, channels: tuple[str, ...]) -> dict[str, float]:
-        with self._lock:
-            sample = self._adapter.read_demod()
-        mapped = {
-            "topography": sample.get("r_v"),
-            "error": sample.get("x_v"),
-            "amplitude": sample.get("r_v"),
-            "phase": sample.get("phase_deg"),
-            "current": sample.get("auxin0_v"),
-            "didv": sample.get("auxin1_v"),
-            "lockin_x": sample.get("x_v"),
-            "lockin_y": sample.get("y_v"),
-            "lockin_r": sample.get("r_v"),
-            "lockin_phase": sample.get("phase_deg"),
-        }
-        return {
-            channel: float(value)
-            for channel, value in mapped.items()
-            if channel in channels and value is not None
-        }

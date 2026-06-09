@@ -29,9 +29,11 @@ flowchart LR
     end
 
     subgraph Device["Device Layer"]
-        DeviceManager["DeviceManager\nload configs,\nfunction mapping,\nconnect/disconnect,\ndevice snapshot"]
+        DeviceManager["DeviceManager\nload configs,\nfunction mapping,\nedit addresses,\nconnect/disconnect,\ndevice snapshot"]
+        AdapterScanner["AdapterScannerDevice\nscanner adapter bridge,\npoint scan worker,\nline_data_ready"]
+        LockinRouting["Lock-in Scan Routing\nsignal_a-D -> device:channel:signal"]
         MockDevice["MockScannerDevice\nline_data_ready,\nscan_finished,\ncommand_logged"]
-        FutureHardware["Future Hardware Adapter\nsame signal contract"]
+        HardwareAdapters["Registered Adapters\nMultiField, Newton LT06,\nAttocube, Zurich HF2LI,\nSRS lock-ins"]
     end
 
     subgraph Data["Data And Export"]
@@ -65,11 +67,14 @@ flowchart LR
 
     Commands --> MockDevice
     Controller --> MockDevice
-    DeviceManager -. future adapter source .-> FutureHardware
-    Controller -. future swap .-> FutureHardware
+    DeviceManager --> HardwareAdapters
+    DeviceManager --> AdapterScanner
+    DeviceManager --> LockinRouting
+    Controller --> AdapterScanner
 
     MockDevice -- line data --> Controller
-    FutureHardware -- line data --> Controller
+    AdapterScanner -- line data --> Controller
+    LockinRouting -- point samples --> AdapterScanner
 
     Controller --> Images
     Images --> Panels
@@ -89,7 +94,8 @@ sequenceDiagram
     participant User
     participant GUI as GUI / CLI
     participant Ctrl as ScanController
-    participant Dev as Device Adapter
+    participant Dev as AdapterScannerDevice / MockScannerDevice
+    participant Routing as Lock-in Routing
     participant View as GUI Panels
     participant Export as GSF + metadata.json
 
@@ -99,6 +105,7 @@ sequenceDiagram
     Ctrl->>Dev: start_scan(lines, pixels, channels)
 
     loop Each scan line
+        Dev->>Routing: read routed point signals
         Dev-->>Ctrl: line_data_ready(line_index, channel data)
         Ctrl->>Ctrl: write images[pass][channel][line, :]
         Ctrl-->>View: image_changed / line_changed

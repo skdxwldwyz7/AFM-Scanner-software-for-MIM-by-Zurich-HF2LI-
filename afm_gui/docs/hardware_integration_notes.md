@@ -1,7 +1,7 @@
 # Hardware Integration Notes
 
 This document records the hardware-integration lessons learned while adding
-MultiField, Newton LT06, Attocube, and Zurich HF2LI support.
+MultiField, Newton LT06, Attocube, Zurich HF2LI, and SRS lock-in support.
 
 Core rule:
 
@@ -29,15 +29,19 @@ Current devices:
 | `scanner_mock` | `mock.scanner` | `scanner` | `scanner_voltage` | Software scanner simulator |
 | `multifield_scanner` | `multifield.scanner` | `scanner` | `scanner_voltage` | MultiField scanner, default `COM3` |
 | `newton_lt06` | `multifield.newton_lt06` | `stage` | `xyz_stage` | Newton LT06 stage, default `COM5` |
-| `attocube_xyz` | `attocube.anc350` | `stage` | `xyz_stage` | Attocube XYZ stage |
+| `attocube_xyz` | `attocube.anc350` | `stage` | `xyz_stage` | Attocube XYZ stage, default `192.168.0.9:9090` |
 | `zurich_HF2LI` | `zurich.hf2li` | `lockin` | `lockin_demod`, `lockin_output` | Zurich HF2LI lock-in |
+| `srs_sr830` | `srs.sr830` | `lockin` | `lockin_demod`, `lockin_output` | QCoDeS SR830 lock-in |
+| `srs_sr860` | `srs.sr860` | `lockin` | `lockin_demod`, `lockin_output` | QCoDeS SR860 lock-in |
+| `srs_sr865` | `srs.sr865` | `lockin` | `lockin_demod`, `lockin_output` | QCoDeS SR865 lock-in |
+| `srs_sr865a` | `srs.sr865a` | `lockin` | `lockin_demod`, `lockin_output` | QCoDeS SR865A lock-in |
 
 Current function assignments:
 
 | Function | Required kind | Required capability | Assigned device |
 | --- | --- | --- | --- |
 | `scan_scanner` | `scanner` | `scanner_voltage` | `multifield_scanner` |
-| `coarse_stage` | `stage` | `xyz_stage` | `newton_lt06` |
+| `coarse_stage` | `stage` | `xyz_stage` | `attocube_xyz` |
 | `lockin` | `lockin` | `lockin_demod` | `zurich_HF2LI` |
 
 ## Add A New Hardware Device
@@ -69,6 +73,16 @@ host: 127.0.0.1
 port: 8005
 device: DEV18388
 interface: USB
+```
+
+Known SRS QCoDeS lock-in connection values use VISA addresses. Edit the
+`address` field in Device Manager before connecting:
+
+```yaml
+driver: srs.sr830   # or srs.sr860, srs.sr865, srs.sr865a
+connection:
+  backend: visa
+  address: GPIB0::8::INSTR
 ```
 
 ### 2. Copy vendor files into the package
@@ -129,6 +143,7 @@ afm_gui/device/adapters/mock.py
 afm_gui/device/adapters/multifield.py
 afm_gui/device/adapters/zurich.py
 afm_gui/device/adapters/attocube.py
+afm_gui/device/adapters/srs.py
 ```
 
 Adapters should not depend on GUI widgets. They should only handle hardware
@@ -253,10 +268,28 @@ function:
 
 - Scan module uses `scan_scanner`.
 - Stage module uses `coarse_stage`.
-- Lock-in module uses `lockin`.
+- Lock-in module uses `lockin` for the channel setup/readout panel.
+- Approach module can use `coarse_stage.z` for Z approach motion and any
+  connected lock-in device as its stop-condition signal source.
+- Scan Routing can map A-D image slots (`signal_a` through `signal_d`) to any
+  configured lock-in device/channel/signal. Signals include `x`, `y`, `r`,
+  `theta`, and `frequency`. Zurich HF2LI exposes `ch1` and `ch2`; SRS lock-ins
+  expose `ch1`.
 
 The GUI should call the unified adapter interface, not import vendor drivers
 directly.
+
+Approach hardware behavior is intentionally strict:
+
+- `mock.z` and mock signal remain available for offline validation.
+- `coarse_stage.z` requires the assigned `coarse_stage` function to be
+  connected in Device Manager.
+- A real approach signal requires the selected lock-in device to be connected
+  and to provide `read_demod`.
+- Missing real hardware causes the approach to enter `Failed`; it does not
+  silently fall back to mock data.
+- Device Manager is locked while approach is running or paused, matching the
+  scan lockout behavior.
 
 ### 10. Add tests
 
@@ -305,14 +338,16 @@ Check:
 - Interface matches LabOne, for example `USB`.
 - `zhinst-qcodes`, `zhinst-core`, and `zhinst-toolkit` are installed in
   `afm-gui`.
+- For SRS instruments, confirm the VISA backend and address in Device Manager.
+  The default entries are placeholders and should be edited before connecting.
 
 Current status note:
 
 - MultiField scanner control from the GUI through `scan_scanner` has been
   observed working.
-- Zurich HF2LI / `lockin` connection is still problematic. Until this is fixed,
-  lock-in panel controls and scan-channel acquisition that depends on Zurich
-  demod data should be treated as not yet hardware-validated.
+- Zurich HF2LI and SRS adapters are registered and wired into the GUI. Treat
+  each physical lock-in setup as hardware-validation-required until Device
+  Manager connects cleanly and `Read` returns the expected X/Y/R/Theta values.
 
 ### GUI connects but controls do nothing
 
@@ -324,6 +359,14 @@ Check:
 - The GUI module uses `DeviceManager.adapter_for_function(...)`.
 - The function assignment points to the correct device.
 - The device provides the required capability.
+
+For Approach, also check:
+
+- `coarse_stage` is assigned to the intended Z actuator.
+- The adapter exposes either `move_relative(dz=...)` or
+  `read_position()` plus `move_absolute(z=...)`.
+- The selected lock-in route can be read manually from the Lock-in Amplifier
+  panel before using it as an approach condition.
 
 ## Checklist
 

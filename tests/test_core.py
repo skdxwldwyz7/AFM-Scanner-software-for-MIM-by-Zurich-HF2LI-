@@ -3,6 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from dataclasses import replace
+import json
 import os
 import sys
 import types
@@ -15,6 +17,9 @@ from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication
 from qcodes.instrument import Instrument
 
+from afm_gui.core.approach_config import ApproachConditionConfig, ApproachConfig, evaluate_approach_condition
+from afm_gui.core.approach_controller import ApproachController
+from afm_gui.core.parameter_tree import build_parameter_tree, sync_scan_config_to_tree
 from afm_gui.core.scan_config import ScanConfig, ScanDirection
 from afm_gui.core.scan_controller import ScanController
 from afm_gui.core.scan_modes import load_scan_modes
@@ -42,19 +47,21 @@ class CoreSmokeTests(unittest.TestCase):
         registry = load_scan_modes()
 
         self.assertEqual(registry.default.name, "lockin")
-        self.assertEqual(registry.default.default_display_count, 2)
+        self.assertEqual(registry.default.default_display_count, 4)
         self.assertEqual(set(registry.modes), {"lockin"})
-        self.assertEqual(registry.default.default_channels, ("lockin_x", "lockin_phase"))
+        self.assertEqual(registry.default.default_channels, ("signal_a", "signal_b"))
 
     def test_lockin_scan_mode_uses_lockin_channels(self) -> None:
         registry = load_scan_modes()
         mode = registry.modes["lockin"]
 
         self.assertEqual(mode.label, "Lock-in Scan")
-        self.assertEqual(mode.default_display_count, 2)
-        self.assertEqual(mode.default_channels, ("lockin_x", "lockin_phase"))
-        self.assertEqual(mode.unit_for("lockin_x"), "V")
-        self.assertEqual(mode.unit_for("lockin_phase"), "deg")
+        self.assertEqual(mode.default_display_count, 4)
+        self.assertEqual(mode.default_channels, ("signal_a", "signal_b"))
+        self.assertEqual(mode.unit_for("signal_a"), "")
+        self.assertEqual(mode.unit_for("signal_b"), "")
+        self.assertEqual(mode.unit_for("signal_c"), "")
+        self.assertEqual(mode.unit_for("signal_d"), "")
 
     def test_device_config_loads_capability_assignments(self) -> None:
         devices, functions = load_device_config_file()
@@ -65,8 +72,32 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertIn("scanner_voltage", device_by_name["multifield_scanner"].capabilities)
         self.assertEqual(device_by_name["newton_lt06"].connection["port"], "COM5")
         self.assertIn("xyz_stage", device_by_name["newton_lt06"].capabilities)
+        self.assertEqual(device_by_name["attocube_xyz"].connection["host"], "192.168.0.9")
+        self.assertIn("xyz_stage", device_by_name["attocube_xyz"].capabilities)
+        self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["demod_index"], 1)
+        self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["input_index"], 1)
+        self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["oscillator_index"], 1)
+        self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["output_index"], 1)
+        self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["amplitude_index"], 7)
         self.assertEqual(function_by_name["scan_scanner"].required_capability, "scanner_voltage")
         self.assertEqual(function_by_name["scan_scanner"].device, "multifield_scanner")
+        self.assertEqual(function_by_name["coarse_stage"].required_capability, "xyz_stage")
+        self.assertEqual(function_by_name["coarse_stage"].device, "attocube_xyz")
+
+    def test_parameter_tree_tracks_initial_and_current_scan_parameters(self) -> None:
+        initial = ScanConfig(linear=0.2, t_sample=0.001, channels=("signal_a",))
+        updated = replace(initial, linear=0.5, t_sample=0.02)
+        tree = build_parameter_tree(initial, ScanDirection.UP)
+
+        sync_scan_config_to_tree(tree, updated, ScanDirection.DOWN)
+        data = tree.to_dict()
+
+        self.assertEqual(data["scan"]["parameters"]["initial"]["timing"]["linear"], 0.2)
+        self.assertEqual(data["scan"]["parameters"]["initial"]["direction"], "up")
+        self.assertEqual(data["scan"]["parameters"]["current"]["timing"]["linear"], 0.5)
+        self.assertEqual(data["scan"]["parameters"]["current"]["timing"]["sample_s"], 0.02)
+        self.assertEqual(data["scan"]["parameters"]["current"]["direction"], "down")
+        self.assertEqual(data["scan"]["timing"]["linear"], 0.5)
 
     def test_device_manager_filters_and_connects_mock_capabilities(self) -> None:
         manager = DeviceManager()
@@ -117,15 +148,31 @@ class CoreSmokeTests(unittest.TestCase):
         def fake_status(session, device, device_id):
             return {"device": device_id, "type": "HF2LI"}
 
-        def fake_sample(device):
+        demod_indices: list[int] = []
+        output_indices: list[tuple[int, int]] = []
+        configured_demods: list[dict[str, object]] = []
+
+        def fake_sample(device, demod_index=0):
+            demod_indices.append(demod_index)
             return FakeSample()
+
+        def fake_average(device, count, delay_s, demod_index=0):
+            demod_indices.append(demod_index)
+            return FakeSample()
+
+        def fake_set_output(session, device, device_id, amplitude, enable, output_on, output_index=0, amplitude_index=6):
+            output_indices.append((output_index, amplitude_index))
+
+        def fake_configure_demod(device, **kwargs):
+            configured_demods.append(dict(kwargs))
 
         fake_tools.ConnectionConfig = FakeConfig
         fake_tools.connect = fake_connect
         fake_tools.device_status = fake_status
         fake_tools.read_demod_sample = fake_sample
-        fake_tools.average_demod_samples = lambda device, count, delay_s: FakeSample()
-        fake_tools.set_output = lambda session, device, device_id, amplitude, enable, output_on: None
+        fake_tools.average_demod_samples = fake_average
+        fake_tools.set_output = fake_set_output
+        fake_tools.configure_demod = fake_configure_demod
         previous = sys.modules.get("hf2li_tools")
         sys.modules["hf2li_tools"] = fake_tools
         try:
@@ -141,13 +188,98 @@ class CoreSmokeTests(unittest.TestCase):
             )
             self.assertEqual(instrument["config"].device, "DEV18388")
             self.assertIn("lockin_demod", adapter.capabilities)
+            self.assertEqual(adapter.lockin_channels, ("ch1", "ch2"))
             self.assertEqual(adapter.status()["type"], "HF2LI")
+            self.assertEqual(adapter.demod_index_for_channel("ch2"), 1)
+            self.assertEqual(adapter.input_index_for_channel("ch2"), 1)
+            self.assertEqual(adapter.oscillator_index_for_channel("ch2"), 1)
+            self.assertEqual(adapter.output_index_for_channel("ch2"), 1)
+            self.assertEqual(adapter.amplitude_index_for_channel("ch2"), 7)
             self.assertEqual(adapter.read_demod()["x_v"], 1.0)
+            self.assertEqual(adapter.read_demod(demod_index=1)["x_v"], 1.0)
+            adapter.set_output(output_index=1, amplitude_index=7)
+            adapter.configure_demod(demod_index=1, input_index=1, oscillator_index=1)
+            self.assertEqual(demod_indices[-2:], [0, 1])
+            self.assertEqual(output_indices, [(1, 7)])
+            self.assertEqual(configured_demods[-1]["demod_index"], 1)
+            self.assertEqual(configured_demods[-1]["input_index"], 1)
         finally:
             if previous is None:
                 sys.modules.pop("hf2li_tools", None)
             else:
                 sys.modules["hf2li_tools"] = previous
+
+    def test_srs_lockins_are_configured_and_registered(self) -> None:
+        devices, _functions = load_device_config_file()
+        device_by_name = {device.name: device for device in devices}
+
+        for name, driver in {
+            "srs_sr830": "srs.sr830",
+            "srs_sr860": "srs.sr860",
+            "srs_sr865": "srs.sr865",
+            "srs_sr865a": "srs.sr865a",
+        }.items():
+            self.assertEqual(device_by_name[name].kind, "lockin")
+            self.assertEqual(device_by_name[name].driver, driver)
+            self.assertIn("lockin_demod", device_by_name[name].capabilities)
+            self.assertIn("address", device_by_name[name].connection)
+
+        from afm_gui.device.adapters.srs import create_srs_lockin
+
+        class FakeParameter:
+            def __init__(self) -> None:
+                self.values: list[float] = []
+
+            def __call__(self, value=None):
+                if value is not None:
+                    self.values.append(float(value))
+                    return None
+                return 1234.0
+
+        class FakeSRS:
+            def __init__(self, name: str, address: str, **kwargs) -> None:
+                self.name = name
+                self.address = address
+                self.kwargs = kwargs
+                self.amplitude = FakeParameter()
+                self.frequency = FakeParameter()
+                self.closed = False
+
+            def get_values(self, *names: str):
+                values = {"X": 1.0, "Y": 2.0, "R": 3.0}
+                return tuple(values[name] for name in names)
+
+            def close(self) -> None:
+                self.closed = True
+
+        fake_module = types.ModuleType("qcodes.instrument_drivers.stanford_research")
+        fake_module.SR830 = FakeSRS
+        previous = sys.modules.get("qcodes.instrument_drivers.stanford_research")
+        sys.modules["qcodes.instrument_drivers.stanford_research"] = fake_module
+        try:
+            instrument, adapter = create_srs_lockin(
+                "srs_sr830",
+                {"address": "GPIB0::8::INSTR", "kwargs": {"timeout": 5}},
+                "srs.sr830",
+            )
+            self.assertEqual(instrument.address, "GPIB0::8::INSTR")
+            self.assertEqual(instrument.kwargs["timeout"], 5)
+            self.assertIn("lockin_demod", adapter.capabilities)
+            self.assertEqual(adapter.lockin_channels, ("ch1",))
+            self.assertEqual(adapter.read_demod()["x_v"], 1.0)
+            self.assertEqual(adapter.read_demod()["r_v"], 3.0)
+            self.assertEqual(adapter.read_demod()["frequency_hz"], 1234.0)
+            adapter.set_output(amplitude=0.2)
+            adapter.configure_demod(frequency_hz=123.0)
+            self.assertEqual(instrument.amplitude.values, [0.2])
+            self.assertEqual(instrument.frequency.values, [123.0])
+            adapter.close()
+            self.assertTrue(instrument.closed)
+        finally:
+            if previous is None:
+                sys.modules.pop("qcodes.instrument_drivers.stanford_research", None)
+            else:
+                sys.modules["qcodes.instrument_drivers.stanford_research"] = previous
 
     def test_attocube_anc350_registry_uses_bundled_python_api(self) -> None:
         fake_amc = types.ModuleType("AMC")
@@ -341,6 +473,32 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual([axis for axis, _value in scanner.voltages], ["x", "y", "x", "y", "x", "y"])
         self.assertEqual(progress[-1], (0, 1, 2, 3, "trace"))
 
+    def test_exported_metadata_uses_updated_runtime_scan_parameters(self) -> None:
+        controller = ScanController(MockScannerDevice())
+        config = ScanConfig(
+            lines=2,
+            pixels=2,
+            channels=("signal_a",),
+            scan_passes=("trace",),
+            linear=0.2,
+            t_sample=0.001,
+            t_settle=0.0,
+            t_rest=0.0,
+        )
+        controller.start(config, ScanDirection.UP)
+        controller.update_runtime_params(linear=0.5, t_sample=0.02)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            controller.export_gsf_bundle(tmp, file_prefix="updated")
+            metadata = json.loads((Path(tmp) / "updated_metadata.json").read_text(encoding="utf-8"))
+
+        controller.stop()
+        self.assertEqual(metadata["scan"]["parameters"]["initial"]["timing"]["linear"], 0.2)
+        self.assertEqual(metadata["scan"]["parameters"]["current"]["timing"]["linear"], 0.5)
+        self.assertEqual(metadata["scan"]["parameters"]["current"]["timing"]["sample_s"], 0.02)
+        self.assertEqual(metadata["scan"]["timing"]["linear"], 0.5)
+        self.assertEqual(metadata["runtime"]["updates"][-1]["params"]["linear"], 0.5)
+
     def test_stage_controller_tracks_z_position(self) -> None:
         controller = StageController()
 
@@ -352,6 +510,33 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(controller.position.z_um, 2.5)
         self.assertEqual(controller.path_array().shape[1], 3)
         self.assertEqual(controller.snapshot()["position_um"]["z"], 2.5)
+
+    def test_approach_condition_evaluator_supports_basic_conditions(self) -> None:
+        self.assertTrue(evaluate_approach_condition(2.0, ApproachConditionConfig("above", threshold=1.0)))
+        self.assertTrue(evaluate_approach_condition(0.5, ApproachConditionConfig("below", threshold=1.0)))
+        self.assertTrue(evaluate_approach_condition(0.5, ApproachConditionConfig("between", low=0.0, high=1.0)))
+        self.assertTrue(evaluate_approach_condition(2.0, ApproachConditionConfig("outside", low=0.0, high=1.0)))
+        self.assertTrue(evaluate_approach_condition(2.0, ApproachConditionConfig("delta", threshold=1.0), baseline=0.5))
+
+    def test_approach_controller_completes_with_mock_signal(self) -> None:
+        controller = ApproachController()
+        config = ApproachConfig(
+            step_um=0.1,
+            settle_s=0.001,
+            condition=ApproachConditionConfig(condition_type="above", threshold=1.0, consecutive=2),
+        )
+        loop = QEventLoop()
+        states: list[str] = []
+        controller.state_changed.connect(states.append)
+        controller.state_changed.connect(lambda state: loop.quit() if state in {"Complete", "Failed"} else None)
+
+        controller.start(config)
+        QTimer.singleShot(3000, loop.quit)
+        loop.exec()
+
+        self.assertIn("Complete", states)
+        self.assertEqual(controller.progress.state, "Complete")
+        self.assertGreaterEqual(controller.progress.consecutive_hits, 2)
 
     def test_startup_uses_writable_mpl_config_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

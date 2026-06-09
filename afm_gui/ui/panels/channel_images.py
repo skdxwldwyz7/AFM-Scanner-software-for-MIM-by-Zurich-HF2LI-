@@ -3,7 +3,7 @@ from __future__ import annotations
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QComboBox, QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from afm_gui.core.scan_config import SCAN_PASSES
 
@@ -59,6 +59,14 @@ def create_channel_view(window, index: int) -> dict[str, object]:
     pass_selector.addItems(SCAN_PASSES)
     flatten_selector = QComboBox()
     flatten_selector.addItems(("Raw", "Line Mean", "Plane"))
+    range_auto = QCheckBox("Auto")
+    range_auto.setChecked(True)
+    range_min = _range_spin()
+    range_max = _range_spin()
+    range_min.setValue(0.0)
+    range_max.setValue(1.0)
+    range_min.setEnabled(False)
+    range_max.setEnabled(False)
     if index < len(window.current_mode.channel_names):
         selector.setCurrentText(window.current_mode.channel_names[index])
 
@@ -96,6 +104,11 @@ def create_channel_view(window, index: int) -> dict[str, object]:
     header_layout.addWidget(selector, 0, 0)
     header_layout.addWidget(pass_selector, 0, 1)
     header_layout.addWidget(flatten_selector, 0, 2)
+    header_layout.addWidget(range_auto, 0, 3)
+    header_layout.addWidget(QLabel("Min"), 1, 0)
+    header_layout.addWidget(range_min, 1, 1)
+    header_layout.addWidget(QLabel("Max"), 1, 2)
+    header_layout.addWidget(range_max, 1, 3)
     layout.addWidget(header)
     image_area_layout.addWidget(plot, 1)
     image_area_layout.addWidget(histogram)
@@ -104,14 +117,29 @@ def create_channel_view(window, index: int) -> dict[str, object]:
     selector.currentTextChanged.connect(window._refresh_image_views)
     pass_selector.currentTextChanged.connect(window._refresh_image_views)
     flatten_selector.currentTextChanged.connect(window._refresh_image_views)
+    range_auto.toggled.connect(lambda checked, view_index=index: window._set_view_auto_range(view_index, checked))
+    range_min.valueChanged.connect(window._refresh_image_views)
+    range_max.valueChanged.connect(window._refresh_image_views)
     return {
         "widget": widget,
         "selector": selector,
         "pass_selector": pass_selector,
         "flatten_selector": flatten_selector,
+        "range_auto": range_auto,
+        "range_min": range_min,
+        "range_max": range_max,
         "plot": plot,
         "image_item": image_item,
         "histogram": histogram,
         "colormap": "viridis",
         "roi_item": None,
     }
+
+
+def _range_spin() -> QDoubleSpinBox:
+    widget = QDoubleSpinBox()
+    widget.setRange(-1e12, 1e12)
+    widget.setDecimals(6)
+    widget.setSingleStep(0.01)
+    widget.setMinimumWidth(88)
+    return widget

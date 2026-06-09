@@ -24,6 +24,7 @@ class LockInReading:
     y_v: float = 0.0
     r_v: float = 0.0
     theta_deg: float = 0.0
+    frequency_hz: float = 0.0
 
 
 @dataclass(slots=True)
@@ -154,7 +155,13 @@ class LockInController(QObject):
         y_v = amplitude * math.sin(phase_rad) + float(self._rng.normal(0.0, noise_scale))
         r_v = math.hypot(x_v, y_v)
         theta_deg = math.degrees(math.atan2(y_v, x_v))
-        self.reading = LockInReading(x_v=x_v, y_v=y_v, r_v=r_v, theta_deg=theta_deg)
+        self.reading = LockInReading(
+            x_v=x_v,
+            y_v=y_v,
+            r_v=r_v,
+            theta_deg=theta_deg,
+            frequency_hz=self.settings.frequency_hz,
+        )
         self.reading_changed.emit(self.reading)
         return self.reading
 
@@ -174,6 +181,7 @@ class LockInController(QObject):
                 "y_v": self.reading.y_v,
                 "r_v": self.reading.r_v,
                 "theta_deg": self.reading.theta_deg,
+                "frequency_hz": self.reading.frequency_hz,
             },
             "pid": {
                 "enabled": self.pid.enabled,

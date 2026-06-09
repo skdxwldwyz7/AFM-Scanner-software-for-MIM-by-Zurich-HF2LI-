@@ -19,7 +19,10 @@ FUNCTION_TABLE_HEADERS = ("Function", "Requirement", "Assigned Device", "Status"
 
 def build_device_manager_panel(window) -> QGroupBox:
     box = QGroupBox("Device Manager")
+    box.setMinimumHeight(500)
     layout = QGridLayout(box)
+    layout.setRowStretch(1, 3)
+    layout.setRowStretch(3, 3)
 
     window.device_table = QTableWidget(0, len(DEVICE_TABLE_HEADERS))
     window.device_table.setHorizontalHeaderLabels(DEVICE_TABLE_HEADERS)
@@ -30,6 +33,7 @@ def build_device_manager_panel(window) -> QGroupBox:
         | QAbstractItemView.EditTrigger.SelectedClicked
         | QAbstractItemView.EditTrigger.EditKeyPressed
     )
+    window.device_table.setMinimumHeight(210)
     window.device_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     window.device_function_table = QTableWidget(0, len(FUNCTION_TABLE_HEADERS))
@@ -37,6 +41,7 @@ def build_device_manager_panel(window) -> QGroupBox:
     window.device_function_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     window.device_function_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     window.device_function_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    window.device_function_table.setMinimumHeight(190)
     window.device_function_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     window.load_devices = QPushButton("Load Config")

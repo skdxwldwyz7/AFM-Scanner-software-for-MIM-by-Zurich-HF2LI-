@@ -79,12 +79,12 @@ def raw_device_id(device_id: str) -> str:
     return device_id.lower()
 
 
-def sigout_osc_amplitude_path(device_id: str, sigout: int = 0) -> str:
-    return f"/{raw_device_id(device_id)}/sigouts/{sigout}/amplitudes/6"
+def sigout_osc_amplitude_path(device_id: str, sigout: int = 0, amplitude_index: int = 6) -> str:
+    return f"/{raw_device_id(device_id)}/sigouts/{sigout}/amplitudes/{amplitude_index}"
 
 
-def sigout_osc_enable_path(device_id: str, sigout: int = 0) -> str:
-    return f"/{raw_device_id(device_id)}/sigouts/{sigout}/enables/6"
+def sigout_osc_enable_path(device_id: str, sigout: int = 0, amplitude_index: int = 6) -> str:
+    return f"/{raw_device_id(device_id)}/sigouts/{sigout}/enables/{amplitude_index}"
 
 
 def read_raw(session: Any, path: str, kind: str) -> Any:
@@ -186,13 +186,45 @@ def apply_defaults(session: Any, device: Any, defaults: InitDefaults, device_id:
     device.plls[0].enable(defaults.pll_enable)
 
 
-def set_output(session: Any, device: Any, device_id: str, amplitude: float | None, enable: bool | None, output_on: bool | None) -> None:
+def set_output(
+    session: Any,
+    device: Any,
+    device_id: str,
+    amplitude: float | None,
+    enable: bool | None,
+    output_on: bool | None,
+    output_index: int = 0,
+    amplitude_index: int = 6,
+) -> None:
     if amplitude is not None:
-        write_raw(session, sigout_osc_amplitude_path(device_id), "double", amplitude)
+        write_raw(session, sigout_osc_amplitude_path(device_id, output_index, amplitude_index), "double", amplitude)
     if enable is not None:
-        write_raw(session, sigout_osc_enable_path(device_id), "int", int(enable))
+        write_raw(session, sigout_osc_enable_path(device_id, output_index, amplitude_index), "int", int(enable))
     if output_on is not None:
-        device.sigouts[0].on(int(output_on))
+        device.sigouts[output_index].on(int(output_on))
+
+
+def configure_demod(
+    device: Any,
+    *,
+    demod_index: int = 0,
+    input_index: int = 0,
+    oscillator_index: int = 0,
+    frequency_hz: float | None = None,
+    phase_deg: float | None = None,
+    time_constant_s: float | None = None,
+    enable: bool = True,
+) -> None:
+    demod = device.demods[demod_index]
+    if frequency_hz is not None:
+        device.oscs[oscillator_index].freq(float(frequency_hz))
+    demod.enable(int(enable))
+    demod.adcselect(int(input_index))
+    demod.oscselect(int(oscillator_index))
+    if phase_deg is not None:
+        demod.phaseshift(float(phase_deg))
+    if time_constant_s is not None:
+        demod.timeconstant(float(time_constant_s))
 
 
 def read_demod_sample(device: Any, demod_index: int = 0) -> DemodSample:

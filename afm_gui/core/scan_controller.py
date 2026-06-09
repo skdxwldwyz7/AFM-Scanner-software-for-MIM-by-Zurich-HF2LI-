@@ -12,6 +12,7 @@ from afm_gui.core.parameter_tree import (
     build_parameter_tree,
     gsf_metadata_from_tree,
     record_runtime_update,
+    sync_scan_config_to_tree,
     write_parameter_tree_json,
 )
 from afm_gui.core.scan_geometry import generate_scan_lines, line_time, pos_to_voltage
@@ -129,6 +130,7 @@ class ScanController(QObject):
             applied_to_line_index=target_line,
             params=cleaned,
         )
+        sync_scan_config_to_tree(self.parameter_tree, self.config, self.direction)
         self.log_message.emit(f"Runtime parameters updated for next line >= {target_line}: {changed}")
         self.runtime_parameters_changed.emit(cleaned)
         return cleaned
@@ -142,6 +144,8 @@ class ScanController(QObject):
     ) -> list[Path]:
         output_dir = Path(directory)
         output_dir.mkdir(parents=True, exist_ok=True)
+        sync_scan_config_to_tree(self.parameter_tree, self.config, self.direction, mode=mode)
+        self.parameter_tree.set_path("runtime.exported_utc", self.parameter_tree.data["scan"]["parameters"]["updated_utc"])
         exported = []
         base_metadata = gsf_metadata_from_tree(self.parameter_tree)
         prefix = safe_filename(file_prefix) if file_prefix else ""
@@ -280,6 +284,8 @@ class ScanController(QObject):
         return acquisition_line_index
 
     def _on_finished(self) -> None:
+        sync_scan_config_to_tree(self.parameter_tree, self.config, self.direction)
+        self.parameter_tree.set_path("runtime.completed_utc", self.parameter_tree.data["scan"]["parameters"]["updated_utc"])
         self._running = False
         self._paused = False
         self.state_changed.emit("Idle")

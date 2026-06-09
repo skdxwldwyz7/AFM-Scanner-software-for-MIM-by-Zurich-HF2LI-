@@ -26,16 +26,24 @@ modes:
   lockin:
     enabled: true
     label: Lock-in Scan
-    default_display_count: 2
+    default_display_count: 4
     channels:
-      - name: lockin_x
-        label: Lock-in X
-        unit: V
+      - name: signal_a
+        label: A
+        unit: ""
         enabled: true
-      - name: lockin_phase
-        label: Lock-in Phase
-        unit: deg
+      - name: signal_b
+        label: B
+        unit: ""
         enabled: true
+      - name: signal_c
+        label: C
+        unit: ""
+        enabled: false
+      - name: signal_d
+        label: D
+        unit: ""
+        enabled: false
 
   spectroscopy:
     enabled: false

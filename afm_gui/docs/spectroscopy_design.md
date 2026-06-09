@@ -7,14 +7,28 @@ spectrum instead of only scalar image values. This should support workflows such
 as bias spectroscopy, frequency sweeps, force curves, or other point-wise
 one-dimensional sweeps.
 
-The first implementation should be a mock-device MVP that proves the full
-workflow:
+The first implementation is a mock-device MVP that proves the full workflow:
 
 - configure spectroscopy parameters
 - acquire one spectrum at each scan point
 - display a live one-dimensional spectrum
 - display a two-dimensional slice map at a selected spectrum value
 - save the complete data as a dedicated spectroscopy data bundle
+
+Current implementation status:
+
+- `SpectroscopyConfig` exists.
+- `SpectroscopyController` performs mock point-wise acquisition.
+- `Spectroscopy` module, panel, and tests exist, but the dock is temporarily
+  hidden from the GUI/View menu until the real-hardware routing is clarified.
+- The panel has axis controls, start/pause/resume/stop state management,
+  memory estimate, live spectrum display, slice map display, HDF5 bundle save,
+  and selected-slice GSF export.
+- The complete bundle uses `.afmspm.h5`.
+
+The remaining design work is primarily real hardware integration, large-map
+streaming/chunking, stronger confirmation prompts, and richer spectroscopy
+inspection workflows.
 
 ## High-Level Concept
 
@@ -45,9 +59,9 @@ Two-dimensional scalar maps can still be kept for topography or preview data:
 maps[scan_pass][channel] -> ndarray(lines, pixels)
 ```
 
-## Proposed Package Structure
+## Package Structure
 
-New files:
+Implemented files:
 
 ```text
 afm_gui/core/spectroscopy_config.py
@@ -252,19 +266,27 @@ sample01_metadata.json
 
 ## MVP Implementation Plan
 
+Completed:
+
 1. Add spectroscopy data-format writer and reader with tests.
 2. Add `SpectroscopyConfig` and a mock spectroscopy acquisition path.
 3. Add `SpectroscopyController` with point-wise progress signals.
-4. Add `SpectroscopyPanel` with bias sweep controls, current spectrum plot, and
-   selected slice map.
-5. Add `SpectroscopyModule` to wire the panel into `MainWindow` and the `View`
-   menu.
+4. Add `SpectroscopyPanel` with bias/frequency/Z/field/custom axis controls,
+   current spectrum plot, selected slice map, button state management, and raw
+   memory estimate.
+5. Add `SpectroscopyModule` and keep it available in code/tests; expose it in
+   `MainWindow` and the `View` menu only after the real-hardware routing is
+   clarified.
 6. Add save action for `.afmspm.h5`.
-7. Add optional GSF export for a selected slice.
+7. Add selected-slice GSF export.
 
-Keep the first version limited to bias sweeps with mock data. After the GUI,
-controller, and data format are stable, connect real bias source, lock-in, and
-Zurich/device-manager integrations.
+Next implementation work:
+
+1. Connect real bias source, lock-in, and Zurich/device-manager integrations.
+2. Add chunked on-disk recording for large maps.
+3. Add stronger large-map confirmation prompts.
+4. Add selected-pixel spectrum inspection from the slice map.
+5. Decide trace/retrace policy for real spectroscopy acquisition.
 
 ## Open Design Questions
 

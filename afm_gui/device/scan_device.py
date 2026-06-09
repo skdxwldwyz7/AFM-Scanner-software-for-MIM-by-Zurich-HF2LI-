@@ -205,7 +205,7 @@ class _AdapterScanWorker(QObject):
     def _acquire_pass(self, line_index: int, scan_pass: str, start: np.ndarray, end: np.ndarray) -> dict[str, np.ndarray]:
         pixels = max(1, int(self._config.pixels))
         values = {
-            channel: np.full(pixels, np.nan, dtype=float)
+            channel: np.zeros(pixels, dtype=float)
             for channel in self._channels
         }
         points = np.linspace(start, end, pixels)
@@ -222,7 +222,7 @@ class _AdapterScanWorker(QObject):
                 self._set_xy_voltage(point)
             sample = self._read_sample()
             if not sample and not self._missing_sample_logged:
-                self.command_logged.emit("Acquisition callback returned no channel data; filling samples with NaN")
+                self.command_logged.emit("Acquisition callback returned no channel data; filling samples with 0")
                 self._missing_sample_logged = True
             for channel in self._channels:
                 if channel in sample:

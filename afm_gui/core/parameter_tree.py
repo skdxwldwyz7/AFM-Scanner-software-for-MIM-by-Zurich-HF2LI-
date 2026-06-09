@@ -50,6 +50,7 @@ def build_parameter_tree(
     display_passes: tuple[str, ...] = (),
     display_flatten_modes: tuple[str, ...] = (),
     display_colormaps: tuple[str, ...] = (),
+    display_ranges: tuple[dict[str, object], ...] = (),
     line_channel: str = "",
     line_pass: str = "",
     source: str = "unknown",
@@ -60,6 +61,7 @@ def build_parameter_tree(
         channel: mode.unit_for(channel) if mode is not None else ""
         for channel in config.channels
     }
+    parameter_snapshot = scan_config_snapshot(config, direction, mode=mode)
 
     geometry = {
         "coordinate_unit": config.xy_unit,
@@ -101,7 +103,7 @@ def build_parameter_tree(
     elif config.xy_unit == "V":
         timing["linear_v_s"] = config.linear
 
-    return ParameterTree(
+    tree = ParameterTree(
         {
             "app": {
                 "name": "afm-gui",
@@ -115,6 +117,10 @@ def build_parameter_tree(
                     "label": mode_label,
                 },
                 "direction": direction_name,
+                "parameters": {
+                    "initial": deepcopy(parameter_snapshot),
+                    "current": deepcopy(parameter_snapshot),
+                },
                 "geometry": geometry,
                 "timing": timing,
                 "channels": {
@@ -133,6 +139,7 @@ def build_parameter_tree(
                 "view_passes": list(display_passes),
                 "flatten_modes": list(display_flatten_modes),
                 "colormaps": list(display_colormaps),
+                "color_ranges": [dict(item) for item in display_ranges],
                 "line_channel": line_channel,
                 "line_pass": line_pass,
             },
@@ -142,10 +149,97 @@ def build_parameter_tree(
             },
         }
     )
+    return tree
 
 
 def parameter_tree_from_config(config: ScanConfig, direction: int) -> ParameterTree:
     return build_parameter_tree(config, direction)
+
+
+def scan_config_snapshot(
+    config: ScanConfig,
+    direction: int,
+    *,
+    mode: ScanModeConfig | None = None,
+) -> dict[str, Any]:
+    direction_name = "up" if direction == ScanDirection.UP else "down"
+    channel_units = {
+        channel: mode.unit_for(channel) if mode is not None else ""
+        for channel in config.channels
+    }
+    return {
+        "mode": {
+            "name": config.scan_mode,
+            "label": mode.label if mode is not None else config.scan_mode,
+        },
+        "direction": direction_name,
+        "geometry": {
+            "coordinate_unit": config.xy_unit,
+            "center_x": config.xc,
+            "center_y": config.yc,
+            "width": config.width,
+            "height": config.height,
+            "angle_deg": config.angle,
+            "pixels": config.pixels,
+            "lines": config.lines,
+        },
+        "timing": {
+            "linear": config.linear,
+            "linear_unit": f"{config.xy_unit}/s",
+            "sample_s": config.t_sample,
+            "settle_s": config.t_settle,
+            "rest_s": config.t_rest,
+        },
+        "channels": {
+            "recorded": list(config.channels),
+            "passes": list(config.scan_passes),
+            "units": channel_units,
+        },
+        "calibration": {
+            "volts_per_nm_x": config.volts_per_nm_x,
+            "volts_per_nm_y": config.volts_per_nm_y,
+        },
+    }
+
+
+def sync_scan_config_to_tree(
+    tree: ParameterTree,
+    config: ScanConfig,
+    direction: int,
+    *,
+    mode: ScanModeConfig | None = None,
+) -> None:
+    snapshot = scan_config_snapshot(config, direction, mode=mode)
+    tree.set_path("scan.parameters.current", snapshot)
+    tree.set_path("scan.mode", snapshot["mode"])
+    tree.set_path("scan.direction", snapshot["direction"])
+    tree.set_path("scan.geometry", snapshot["geometry"])
+    if config.xy_unit == "nm":
+        tree.update_paths(
+            {
+                "scan.geometry.center_x_nm": config.xc,
+                "scan.geometry.center_y_nm": config.yc,
+                "scan.geometry.width_nm": config.width,
+                "scan.geometry.height_nm": config.height,
+            }
+        )
+    elif config.xy_unit == "V":
+        tree.update_paths(
+            {
+                "scan.geometry.center_x_v": config.xc,
+                "scan.geometry.center_y_v": config.yc,
+                "scan.geometry.width_v": config.width,
+                "scan.geometry.height_v": config.height,
+            }
+        )
+    tree.set_path("scan.timing", snapshot["timing"])
+    if config.xy_unit == "nm":
+        tree.set_path("scan.timing.linear_nm_s", config.linear)
+    elif config.xy_unit == "V":
+        tree.set_path("scan.timing.linear_v_s", config.linear)
+    tree.set_path("scan.channels", snapshot["channels"])
+    tree.set_path("scan.calibration", snapshot["calibration"])
+    tree.set_path("scan.parameters.updated_utc", _now_utc())
 
 
 def record_runtime_update(

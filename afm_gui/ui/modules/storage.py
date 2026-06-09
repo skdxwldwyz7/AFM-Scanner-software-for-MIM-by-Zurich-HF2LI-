@@ -20,6 +20,7 @@ class StorageModule(QObject):
         self,
         controller: ScanController,
         mode_provider: Callable[[], ScanModeConfig],
+        metadata_provider: Callable[[], dict[str, object]] | None,
         log_callback: Callable[[str], None],
         dialog_parent: QWidget,
         parent: QObject | None = None,
@@ -27,6 +28,7 @@ class StorageModule(QObject):
         super().__init__(parent)
         self.controller = controller
         self._mode_provider = mode_provider
+        self._metadata_provider = metadata_provider
         self._log_callback = log_callback
         self._dialog_parent = dialog_parent
 
@@ -47,6 +49,7 @@ class StorageModule(QObject):
         }
 
     def save_gsf_bundle(self) -> None:
+        self._sync_extra_metadata()
         path, _ = QFileDialog.getSaveFileName(
             self._dialog_parent,
             "Save GSF Bundle",
@@ -80,6 +83,7 @@ class StorageModule(QObject):
     def auto_save(self, event: str) -> None:
         if not self.auto_save_enabled.isChecked() or self.controller.current_line_index < 0:
             return
+        self._sync_extra_metadata()
         directory = Path(self.auto_save_dir.text().strip() or str(self.DEFAULT_AUTO_SAVE_DIR))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         line_number = self.controller.current_line_index + 1
@@ -98,6 +102,16 @@ class StorageModule(QObject):
             self.controller.export_gsf_bundle(directory, self._mode_provider(), file_prefix=prefix)
         except OSError as exc:
             self._log_callback(f"Auto save failed: {exc}")
+
+    def _sync_extra_metadata(self) -> None:
+        if self._metadata_provider is None:
+            return
+        storage = self.controller.parameter_tree.data.get("storage", {})
+        autosave_events = list(storage.get("autosave", {}).get("events", [])) if isinstance(storage, dict) else []
+        manual_events = list(storage.get("manual_save", {}).get("events", [])) if isinstance(storage, dict) else []
+        self.controller.parameter_tree.update_paths(self._metadata_provider())
+        self.controller.parameter_tree.set_path("storage.autosave.events", autosave_events)
+        self.controller.parameter_tree.set_path("storage.manual_save.events", manual_events)
 
 
 __all__ = ["StorageModule"]

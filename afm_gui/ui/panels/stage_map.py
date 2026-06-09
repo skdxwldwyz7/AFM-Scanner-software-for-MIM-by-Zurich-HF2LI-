@@ -30,7 +30,7 @@ def build_stage_map_panel(window) -> QGroupBox:
     window.stage_target_x = _double(-100_000, 100_000, 0, " um")
     window.stage_target_y = _double(-100_000, 100_000, 0, " um")
     window.stage_target_z = _double(-100_000, 100_000, 0, " um")
-    window.stage_step = _double(0.001, 10_000, 10, " um")
+    window.stage_step = _double(0.001, 10_000, 1, " um")
     window.stage_z_step = _double(0.001, 10_000, 1, " um")
     position_form.addRow("X", window.stage_x_label)
     position_form.addRow("Y", window.stage_y_label)

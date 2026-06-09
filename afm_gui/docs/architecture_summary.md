@@ -34,7 +34,7 @@ afm_gui/docs/hardware_integration_notes.md
 
 - `ui/`: PyQt6 GUI, dockable panels, menus, display controls.
 - `core/`: scan configuration, scan controller, stage controller, lock-in
-  controller, geometry, scan modes, parameter tree.
+  controller, approach controller, geometry, scan modes, parameter tree.
 - `device/`: device adapters, scan-device bridges, mock devices, and the
   config-driven `DeviceManager`.
 - `protocol/`: SPM command builders.
@@ -65,19 +65,24 @@ and reading channel values through an acquisition callback. If no scanner
 adapter is connected, it falls back to `MockScannerDevice` so the GUI remains
 usable offline.
 
-The first acquisition callback is implemented in `MainWindow`: when the
-assigned `lockin` adapter is connected, Zurich demod samples are mapped into
-scan channels such as `topography`, `error`, `amplitude`, `phase`, `current`,
-`didv`, `lockin_x`, and `lockin_phase`. Missing channels are filled with `NaN`.
+The first acquisition callback is implemented by `LockinScanAcquisition` in
+`core/lockin_acquisition.py`: it reads the applied Lock-in Scan Routing table.
+Internal image channels such as `signal_a` through `signal_d` are mapped to a
+configured lock-in device, device channel, and signal (`x`, `y`, `r`, `theta`,
+or `frequency`). Multiple image channels can therefore read from
+different lock-ins, or from different channels on the same Zurich HF2LI.
+Missing, disconnected, or temporarily failing routes are filled with `0` so
+scanner motion can continue during hardware bringup.
 
 ## GUI
 
 The GUI uses pyqtgraph `DockArea`. The fixed top menu bar remains available even
 when panels are moved, hidden, or closed.
 
-The visible panel widgets are being split into small modules under
-`afm_gui/ui/panels/`. The main window remains the workbench: it owns controller
-signals, shared GUI state, menus, dock layout, and cross-panel coordination.
+The visible panel widgets are split into small builders under
+`afm_gui/ui/panels/`, while feature modules under `afm_gui/ui/modules/` own
+most panel logic. The main window remains the workbench: it creates the shared
+controllers and wires cross-panel coordination.
 
 Dockable panels:
 
@@ -87,6 +92,7 @@ Dockable panels:
 - Controls
 - Stage Map
 - Lock-in Amplifier
+- Approach
 - State
 - Device Manager
 - Parameter Tree
@@ -109,34 +115,58 @@ current startup layout uses three main columns: Stage Map on the left, Scan
 Parameters in the middle, and Channel Images on the right.
 Controls, Parameter Tree, and Command Log sit below the left column; Line Plot
 and State sit below the right column.
-Panels that are hidden in the startup layout, such as Device Manager and
-Lock-in Amplifier, open as floating panels from `View` instead of being docked
+Device Manager opens automatically as a floating window at startup so
+connection state is visible without taking space from the main DockArea.
+Lock-in Amplifier opens as a floating panel from `View` instead of being docked
 into the already dense startup workspace. Closing the floating window hides the
 panel and updates the `View` menu state instead of restoring the panel into the
-main DockArea.
+main DockArea. The Spectroscopy module remains implemented and tested, but is
+temporarily hidden from the main GUI until its real-hardware routing is
+clarified.
 
-The Controls panel includes Auto Save settings. Auto Save is enabled by default,
-uses `~/AFM_scans` by default, and can be disabled by the user.
+The Controls panel includes scan sequencing and Auto Save settings. It can run
+a single scan, continuously alternate up/down scans, or run a fixed total count
+while alternating direction from the starting button. Auto Save is enabled by
+default, uses `~/AFM_scans` by default, and can be disabled by the user.
 
-The Stage Map panel provides mock XYZ stage motion and sample navigation. It
-supports relative jogs, absolute moves, home, Z-only movement, Z home, path
-clearing, and an aspect-locked X/Y sample map in micrometers. The map is placed
-above the stage controls. Stage position, including Z, is recorded in the
-parameter tree when a scan starts.
+The Stage Map panel provides XYZ stage motion and sample navigation through the
+assigned `coarse_stage` adapter when connected, with a local controller fallback
+when no stage adapter is available. It supports relative jogs, absolute moves,
+home, Z-only movement, Z home, path clearing, and an aspect-locked X/Y sample
+map in micrometers. The map is placed above the stage controls. Stage position,
+including Z, is recorded in the parameter tree when a scan starts.
 
-The Lock-in Amplifier panel provides mock lock-in setup and readout for two
-channels arranged vertically. Each channel controls reference frequency,
+The Lock-in Amplifier panel provides lock-in setup and readout through local
+controllers, with hardware adapter calls when a lock-in is connected. Channels
+are arranged vertically. Each visible channel controls reference frequency,
 amplitude, phase, time constant, sensitivity, reserve mode, and output state.
 Each channel displays X, Y, R, and Theta and provides `Apply` and `Read`
-actions. PID and PLL are configured on the instrument side rather than from the
-GUI. The panel is hidden in the startup layout and can be opened from `View` as
-a floating panel. Lock-in reference and latest reading state for both channels
-are recorded in the parameter tree when a scan starts.
+actions. The readout also includes demod frequency when the adapter provides it.
+PID and PLL are configured on the instrument side rather than from the GUI. The
+panel is hidden in the startup layout and can be opened from `View` as a
+floating panel. Lock-in reference and latest reading state for both channels are
+recorded in the parameter tree when a scan starts.
+
+The Approach panel provides a generic condition-based approach controller. It
+does not encode a specific AFM or STM approach recipe; instead it moves a
+selected actuator in small Z steps, reads a selected signal, and completes when
+a configurable condition is satisfied for a required number of consecutive
+samples. The first implementation supports `above`, `below`, `delta`,
+`between`, and `outside` conditions, max travel/step safety limits,
+pause/resume/abort/retract controls, and a mock actuator/signal path for safe
+offline validation. Real hardware routes are available through conservative
+providers: `coarse_stage.z` uses the connected device assigned to the
+`coarse_stage` function, and signal readout can use any connected lock-in
+device/channel/quantity. Selecting a real actuator or signal without the
+required connection fails explicitly instead of falling back to mock data.
+Device Manager is locked while approach is running or paused. Real approach
+recipes should still be validated recipe by recipe before use.
 
 The Device Manager panel loads hardware definitions from `devices.yaml`, shows
-configured devices, provides connect/disconnect actions, and lets the user map
-hardware functions to devices. The first version uses mock connections and marks
-non-mock drivers as pending implementation.
+configured devices, provides connect/disconnect actions, lets the user edit
+device connection JSON, and maps hardware functions to devices. Registered
+drivers currently include mock scanner, MultiField scanner, Newton LT06,
+Attocube ANC350, Zurich HF2LI, and SRS SR830/SR860/SR865/SR865A lock-ins.
 
 ## Device Loading
 
@@ -160,9 +190,9 @@ The same file can define function assignments. Each function includes:
 - required device kind
 - assigned device name
 
-Example functions include scan scanner, coarse positioning stage, multi-field
-stage, and lock-in detection. Device snapshots and function assignments are
-recorded in the parameter tree when a scan starts.
+Example functions include scan scanner, coarse positioning stage, and lock-in
+detection. Device snapshots and function assignments are recorded in the
+parameter tree when a scan starts and refreshed again before export.
 
 ## Scan Modes And Channels
 
@@ -185,10 +215,10 @@ The current active mode is:
 
 - `lockin`
 
-The `lockin` mode is a hardware-bringup mode that only enables `lockin_x` and
-`lockin_phase` by default. It is useful when the scanner motion path works but
-topography-specific signal mapping is not ready or the Zurich connection is
-being debugged.
+The `lockin` mode is a hardware-bringup mode that exposes route slots A-D and
+records A/B by default. It is useful when the scanner motion path works but
+topography-specific signal mapping is not ready, or when lock-in hardware is
+being validated through Device Manager.
 The `topo`, `spectroscopy`, and `lift` definitions remain in
 `scan_modes.yaml` but are temporarily disabled with `enabled: false`.
 
@@ -220,6 +250,7 @@ selects:
 - scan pass: `trace` or `retrace`
 - display flattening mode
 - colormap
+- color range mode: auto or manual min/max
 
 During scanning, image display updates are scoped to visible views whose
 selected channel/pass changed on the latest line. This keeps display timing
@@ -254,6 +285,8 @@ It records:
 - app metadata schema
 - scan mode
 - scan direction
+- initial scan parameters
+- current/final scan parameters
 - geometry
 - timing
 - channels and units
@@ -262,6 +295,11 @@ It records:
 - GUI display state
 - runtime line index
 - runtime parameter update history
+- storage events
+- device/function snapshots
+- stage state
+- lock-in setup, latest readout, and scan routing
+- approach setup and latest progress
 
 The Parameter Tree dock displays this tree live. The same tree is saved with
 data as `metadata.json`.
@@ -299,12 +337,16 @@ combination is exported as a separate file. GUI export asks for a base filename;
 that filename becomes the prefix for the exported bundle:
 
 ```text
-sample01_topography_trace.gsf
-sample01_topography_retrace.gsf
-sample01_error_trace.gsf
-sample01_error_retrace.gsf
+sample01_signal_a_trace.gsf
+sample01_signal_a_retrace.gsf
+sample01_signal_b_trace.gsf
+sample01_signal_b_retrace.gsf
 sample01_metadata.json
 ```
+
+Disabled modes such as `topo` keep their own channel names in
+`scan_modes.yaml`, but exported filenames always follow the selected channels
+of the active mode.
 
 A complete metadata JSON file is saved next to the GSF files. Each GSF header
 also contains compact metadata and references the matching metadata filename.
@@ -312,7 +354,7 @@ also contains compact metadata and references the matching metadata filename.
 Auto Save uses timestamped bundle prefixes:
 
 ```text
-afm_20260606_033000_finish_line0256_topography_trace.gsf
+afm_20260606_033000_finish_line0256_signal_a_trace.gsf
 afm_20260606_033000_finish_line0256_metadata.json
 ```
 
@@ -320,8 +362,10 @@ The autosave event, output directory, prefix, and line index are recorded in the
 parameter tree before export.
 
 Future spectroscopy-map data should use a dedicated HDF5-based bundle instead
-of forcing complete three-dimensional spectrum cubes into GSF. The proposed
-format and panel/controller design are documented in
+of forcing complete three-dimensional spectrum cubes into GSF. The current MVP
+has a Spectroscopy panel, mock point-wise controller, HDF5 `.afmspm.h5` bundle
+writer/reader, memory estimate, button state handling, and selected-slice GSF
+export. Design notes and remaining questions are documented in
 `afm_gui/docs/spectroscopy_design.md`.
 
 ## CLI
@@ -337,13 +381,13 @@ Available commands:
 ```bash
 afm-cli gui
 afm-cli modes
-afm-cli channels --mode topo
+afm-cli channels --mode lockin
 afm-cli devices
 afm-cli stage --dx 10 --dy 0 --dz 0
 afm-cli lockin --channel ch1 --output --frequency 1000 --amplitude 0.1
-afm-cli preview-commands --mode topo
-afm-cli scan --mode topo --export-gsf ./scan_out --export-prefix sample01
-afm-cli scan --mode topo --auto-save-dir ./scan_out
+afm-cli preview-commands --mode lockin
+afm-cli scan --mode lockin --export-gsf ./scan_out --export-prefix sample01
+afm-cli scan --mode lockin --auto-save-dir ./scan_out
 ```
 
 The CLI and GUI share the same scan controller, scan mode definitions, metadata
@@ -366,6 +410,7 @@ Panel modules now live in:
 ```text
 ui/panels/
   channel_images.py
+  approach.py
   stage_map.py
   lockin.py
   line_plot.py
@@ -381,11 +426,14 @@ Feature modules are starting to live in:
 ```text
 ui/modules/
   channel_images.py
+  approach.py
   device.py
   stage.py
   lockin.py
+  layout.py
   metadata.py
   scan.py
+  scan_sequence.py
   storage.py
 ```
 
@@ -393,19 +441,19 @@ The current refactoring direction is:
 
 - keep slimming `MainWindow` by extracting feature modules around clean
   boundaries
-- add schema versions for metadata, layout files, and scan-mode configuration
-- define a clearer hardware capability/interface layer before connecting real
-  devices
+- harden real hardware timing, routing validation, and safety interlocks
+- continue evolving schema versions for metadata, layout files, and scan-mode
+  configuration
 
 The first item has started with `StageModule`, `LockInModule`, `StorageModule`,
-`DeviceModule`, `ChannelImagesModule`, `ScanModule`, and `MetadataModule`.
-These modules now own their panel widgets or bound controls,
-controllers/managers, signal wiring, display updates, save/device actions, scan
-parameter orchestration, channel image display, line plot updates, ROI
-handling, metadata snapshots/events, and parameter tree rendering. The next
-extraction candidates are help, layout, status, and remaining window
-coordination logic. Another near-term step is to add pre-scan memory budget
-estimation and warning logic for large scans.
+`DeviceModule`, `ChannelImagesModule`, `ApproachModule`, `ScanModule`,
+`ScanSequenceModule`, `WindowLayoutModule`, and `MetadataModule`. These modules
+now own their panel widgets or bound controls, controllers/managers, signal
+wiring, display updates, save/device actions, scan sequencing, dock layout
+persistence, floating-panel behavior, approach state, scan parameter
+orchestration, channel image display, line plot updates, ROI handling, metadata
+snapshots/events, and parameter tree rendering. The next extraction candidates
+are help/status and remaining window coordination logic.
 
 ## Tests
 
@@ -416,4 +464,6 @@ QT_QPA_PLATFORM=offscreen conda run -n afm-gui python -m unittest discover -s te
 ```
 
 It covers core scan/export behavior, metadata tree rendering, GUI module wiring,
-ROI-to-scan-parameter updates, and auto-save bundle creation.
+ROI-to-scan-parameter updates, lock-in routing, scan sequencing, approach
+control paths, runtime metadata updates, spectroscopy export, and auto-save
+bundle creation.

@@ -9,7 +9,7 @@ functions:
     label: Coarse Positioning Stage
     required_kind: stage
     required_capability: xyz_stage
-    device: newton_lt06
+    device: attocube_xyz
 
   - name: lockin
     label: Lock-in Detection
@@ -82,3 +82,64 @@ devices:
       port: 8005
       device: DEV18388
       interface: USB
+      channels:
+        ch1:
+          demod_index: 0
+          input_index: 0
+          oscillator_index: 0
+          output_index: 0
+          amplitude_index: 6
+        ch2:
+          demod_index: 1
+          input_index: 1
+          oscillator_index: 1
+          output_index: 1
+          amplitude_index: 7
+
+  - name: srs_sr830
+    label: SRS SR830 Lock-in
+    kind: lockin
+    driver: srs.sr830
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: GPIB0::8::INSTR
+
+  - name: srs_sr860
+    label: SRS SR860 Lock-in
+    kind: lockin
+    driver: srs.sr860
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: USB0::0xB506::0x2000::INSTR
+
+  - name: srs_sr865
+    label: SRS SR865 Lock-in
+    kind: lockin
+    driver: srs.sr865
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: USB0::0xB506::0x2000::INSTR
+
+  - name: srs_sr865a
+    label: SRS SR865A Lock-in
+    kind: lockin
+    driver: srs.sr865a
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: USB0::0xB506::0x2000::INSTR
