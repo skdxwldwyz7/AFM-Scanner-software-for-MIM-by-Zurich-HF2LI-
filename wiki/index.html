@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>AFM Scan Control Wiki</h1>
+        <p>当前版本：approach hardware integration</p>
+      </div>
+      <nav class="nav">
+        <a class="active" href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>AFM Scan Control Wiki</h1>
+        <p>这个站点整理当前 GUI 原型的安装方式、硬件接入方法、软件架构、模块功能和日常使用流程。它是静态网页，可以直接打开，也可以以后发布为项目文档站。</p>
+      </section>
+
+      <h2>当前软件定位</h2>
+      <p>AFM Scan Control 是一个基于 PyQt6、pyqtgraph 和 QCoDeS 思路构建的 AFM 扫描控制 GUI。当前版本重点支持开环电压扫描、Lock-in 扫图路由、XYZ 位移台控制、Device Manager 硬件连接、通用 Approach 控制、GSF 导出和完整 metadata 保存。</p>
+
+      <div class="cards">
+        <article class="card">
+          <h3>默认工作模式</h3>
+          <p>当前启用的扫描模式是 <code>lockin</code>，默认显示 4 个 image view，默认记录 A/B 两个信号。</p>
+        </article>
+        <article class="card">
+          <h3>硬件接入</h3>
+          <p>通过 <code>devices.yaml</code> 定义设备，通过 Device Manager 编辑地址、连接设备、分配功能。</p>
+        </article>
+        <article class="card">
+          <h3>真实硬件路径</h3>
+          <p>扫描器、粗定位台、锁相放大器和 Approach 均已接入 adapter 路径，未连接时保持 mock 或显式失败。</p>
+        </article>
+        <article class="card">
+          <h3>数据保存</h3>
+          <p>图像以 GSF bundle 保存，metadata JSON 同步记录扫描参数、硬件快照、路由、stage 和 approach 状态。</p>
+        </article>
+      </div>
+
+      <h2>推荐阅读顺序</h2>
+      <ol>
+        <li>第一次部署：先读 <a href="installation.html">安装与运行</a>。</li>
+        <li>连接仪器：读 <a href="hardware.html">添加与连接硬件</a>。</li>
+        <li>理解代码：读 <a href="architecture.html">整体架构</a> 和 <a href="modules.html">模块功能</a>。</li>
+        <li>上机测试：按 <a href="usage.html">使用流程</a> 从 Device Manager、Lock-in、Stage、Scan、Approach 逐步验证。</li>
+        <li>保存和回溯数据：读 <a href="data.html">数据与元数据</a>。</li>
+      </ol>
+
+      <h2>当前关键配置</h2>
+      <table>
+        <tr><th>项目</th><th>当前状态</th></tr>
+        <tr><td>Conda 环境</td><td><code>afm-gui</code></td></tr>
+        <tr><td>入口</td><td><code>conda run -n afm-gui python -m afm_gui.main</code></td></tr>
+        <tr><td>默认 scan mode</td><td><code>lockin</code></td></tr>
+        <tr><td>默认扫描单位</td><td>X/Y 为开环电压 <code>V</code>，速度为 <code>V/s</code></td></tr>
+        <tr><td>默认 scanner function</td><td><code>scan_scanner -> multifield_scanner</code></td></tr>
+        <tr><td>默认 stage function</td><td><code>coarse_stage -> attocube_xyz</code></td></tr>
+        <tr><td>默认 lock-in function</td><td><code>lockin -> zurich_HF2LI</code></td></tr>
+      </table>
+
+      <div class="note">
+        源文档仍保存在 <code>README_GUI.md</code> 和 <code>afm_gui/docs/</code>。这个 wiki 是当前版本的用户入口，代码级设计细节可以继续回到这些 Markdown 文件查看。
+      </div>
+
+      <p class="footer">最后整理版本：approach hardware integration。</p>
+    </main>
+  </div>
+</body>
+</html>

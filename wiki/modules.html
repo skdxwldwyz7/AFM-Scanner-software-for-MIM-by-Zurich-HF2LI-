@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模块功能 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>模块功能</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a class="active" href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>模块功能</h1>
+        <p>这里按用户可见面板和代码模块说明当前功能边界。面板负责交互，module 负责把面板连接到控制器、设备和 metadata。</p>
+      </section>
+
+      <h2>用户可见面板</h2>
+      <table>
+        <tr><th>面板</th><th>功能</th><th>关键说明</th></tr>
+        <tr><td>Device Manager</td><td>设备地址编辑、连接/断开、function assignment、硬件状态显示。</td><td>启动时自动浮动打开；扫描或 approach 运行/暂停时会锁定。</td></tr>
+        <tr><td>Scan Parameters</td><td>设置扫描中心、宽高、像素、行数、速度、采样/settle/rest、channel、模式。</td><td>X/Y 单位为 <code>V</code>，并显示估算全图扫描时间。</td></tr>
+        <tr><td>Controls</td><td>Scan Up/Down、Pause、Resume、Stop、Save GSF、Auto Save、连续/指定次数扫描。</td><td>支持单次、连续上下扫、固定次数交替扫描。</td></tr>
+        <tr><td>Channel Images</td><td>多通道图像显示、trace/retrace 选择、flattening、colormap、自动/手动 color range、ROI。</td><td>默认 4 个 image view，锁相模式默认 A/B 启用。</td></tr>
+        <tr><td>Line Plot</td><td>显示最新一行扫描线。</td><td>长时间运行只保留最新线，降低内存压力。</td></tr>
+        <tr><td>Stage Map</td><td>XYZ 位移台 jog、绝对移动、home、Z home、路径显示。</td><td>默认 <code>coarse_stage</code> 为 Attocube；XY/Z step 默认 <code>1 um</code>。</td></tr>
+        <tr><td>Lock-in Amplifier</td><td>Lock-in apply/read、Channel 1/2 设置、Scan Routing A-D。</td><td>Zurich HF2LI 支持 ch1/ch2；SRS 设备通常只有 ch1。</td></tr>
+        <tr><td>Approach</td><td>通用条件式进针：小步 Z 运动、读信号、满足条件后停止。</td><td>支持 mock 和真实 <code>coarse_stage.z</code>，真实信号来自已连接 lock-in。</td></tr>
+        <tr><td>State</td><td>扫描状态、当前 line/pixel/pass 进度。</td><td>逐点硬件扫描时用于判断是否卡在某个阶段。</td></tr>
+        <tr><td>Parameter Tree</td><td>显示当前 metadata 树。</td><td>不在每行刷新，只在关键事件刷新。</td></tr>
+        <tr><td>Command Log</td><td>显示操作日志。</td><td>保留最近 5000 个 text block。</td></tr>
+      </table>
+
+      <h2>UI Modules</h2>
+      <table>
+        <tr><th>模块</th><th>职责</th></tr>
+        <tr><td><code>DeviceModule</code></td><td>管理 Device Manager 面板、连接状态、硬件锁定和配置加载。</td></tr>
+        <tr><td><code>ScanModule</code></td><td>从 GUI 读写 ScanConfig、启动扫描、处理扫描状态。</td></tr>
+        <tr><td><code>ScanSequenceModule</code></td><td>处理单次、连续上下扫、指定次数扫描序列。</td></tr>
+        <tr><td><code>ChannelImagesModule</code></td><td>创建/刷新图像视图、ROI、flattening、color scale、channel label。</td></tr>
+        <tr><td><code>LockInModule</code></td><td>Lock-in panel 状态、apply/read、routing table、snapshot。</td></tr>
+        <tr><td><code>StageModule</code></td><td>Stage Map 面板和 stage adapter/fallback 控制。</td></tr>
+        <tr><td><code>ApproachModule</code></td><td>Approach 面板、真实/模拟 actuator provider、lock-in signal provider。</td></tr>
+        <tr><td><code>StorageModule</code></td><td>手动保存、Auto Save、GSF bundle 输出。</td></tr>
+        <tr><td><code>MetadataModule</code></td><td>metadata snapshot、参数树刷新、导出前补充状态。</td></tr>
+        <tr><td><code>WindowLayoutModule</code></td><td>默认布局、浮动窗口、View 菜单和用户布局保存/加载。</td></tr>
+      </table>
+
+      <h2>Core Modules</h2>
+      <table>
+        <tr><th>模块</th><th>职责</th></tr>
+        <tr><td><code>scan_config.py</code></td><td>ScanConfig 数据结构和扫描参数。</td></tr>
+        <tr><td><code>scan_controller.py</code></td><td>扫描状态机、line data、pause/resume/stop、参数树更新。</td></tr>
+        <tr><td><code>lockin_acquisition.py</code></td><td>把 Scan Routing 变成逐点读数 callback。</td></tr>
+        <tr><td><code>stage_controller.py</code></td><td>Stage fallback 和本地位置状态。</td></tr>
+        <tr><td><code>lockin_controller.py</code></td><td>Lock-in 面板本地状态和 fallback readout。</td></tr>
+        <tr><td><code>approach_config.py</code></td><td>Approach 配置和 stop condition 判断。</td></tr>
+        <tr><td><code>approach_controller.py</code></td><td>Approach 状态机、定时步进、pause/resume/abort/retract。</td></tr>
+        <tr><td><code>parameter_tree.py</code></td><td>metadata 树构建。</td></tr>
+        <tr><td><code>scan_modes.py</code></td><td>读取 scan mode 和 channel 定义。</td></tr>
+      </table>
+
+      <h2>当前暂缓模块</h2>
+      <p>Spectroscopy 的 panel、controller 和 HDF5 数据格式已经有 MVP，但主界面暂时隐藏。原因是它与真实硬件之间的触发、bias sweep、逐点同步关系还没有完全确定。</p>
+    </main>
+  </div>
+</body>
+</html>

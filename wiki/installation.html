@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>安装与运行 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>安装与运行</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a class="active" href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>安装与运行</h1>
+        <p>当前开发环境名为 <code>afm-gui</code>。推荐使用 conda 管理 Python 环境，用 <code>uv pip</code> 安装项目，速度更快。</p>
+      </section>
+
+      <h2>环境要求</h2>
+      <table>
+        <tr><th>项目</th><th>要求</th></tr>
+        <tr><td>Python</td><td><code>>= 3.12</code></td></tr>
+        <tr><td>主要 GUI 依赖</td><td>PyQt6、pyqtgraph</td></tr>
+        <tr><td>仪器控制依赖</td><td>QCoDeS、qcodes-contrib-drivers、pyserial、PyYAML</td></tr>
+        <tr><td>数据依赖</td><td>numpy、scipy、pandas、h5py、matplotlib</td></tr>
+      </table>
+
+      <h2>新建环境</h2>
+      <pre><code>conda create -n afm-gui python=3.12
+conda activate afm-gui
+python -m pip install uv
+uv pip install -e .</code></pre>
+
+      <h2>启动 GUI</h2>
+      <pre><code>conda run -n afm-gui python -m afm_gui.main</code></pre>
+      <p>也可以在已激活环境中使用入口脚本：</p>
+      <pre><code>afm-gui
+afm-cli gui</code></pre>
+
+      <h2>CLI 常用命令</h2>
+      <pre><code>afm-cli modes
+afm-cli channels --mode lockin
+afm-cli devices
+afm-cli stage --dx 10 --dy 0 --dz 0
+afm-cli lockin --channel ch1 --output --frequency 1000 --amplitude 0.1
+afm-cli preview-commands --mode lockin --direction up --pixels 128 --lines 128
+afm-cli scan --mode lockin --direction up --pixels 128 --lines 128 --export-gsf ./scan_out</code></pre>
+
+      <h2>首次启动会看到什么</h2>
+      <ul>
+        <li>主窗口使用 dock 布局，包含 Scan Parameters、Controls、Stage Map、Channel Images、Line Plot、State、Parameter Tree、Command Log 等面板。</li>
+        <li>Device Manager 会在启动时以浮动窗口打开，方便立即检查硬件连接状态。</li>
+        <li>Lock-in Amplifier 和 Approach 可以从 View 菜单打开。</li>
+        <li>Spectroscopy 功能目前保留在代码中，但暂时从主界面隐藏。</li>
+      </ul>
+
+      <h2>安装后快速检查</h2>
+      <pre><code>conda run -n afm-gui python -m unittest discover -s tests</code></pre>
+      <p>当前版本最近一次完整检查为 55 个测试全部通过。</p>
+
+      <div class="warning">
+        真实仪器连接前，先确认端口、VISA 地址、LabOne server、厂商驱动和 Python 包都在 <code>afm-gui</code> 环境内可用。
+      </div>
+    </main>
+  </div>
+</body>
+</html>

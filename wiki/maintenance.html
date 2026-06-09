@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>测试、备份与维护 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>维护</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a class="active" href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>测试、备份与维护</h1>
+        <p>当前项目已经启用 git 管理，并保留手动源码备份流程。每次接入硬件或修改扫描链路后，都建议跑完整测试。</p>
+      </section>
+
+      <h2>测试命令</h2>
+      <pre><code>conda run -n afm-gui python -m unittest discover -s tests</code></pre>
+      <p>如果要检查语法编译：</p>
+      <pre><code>conda run -n afm-gui python -m compileall afm_gui tests</code></pre>
+
+      <h2>当前测试覆盖</h2>
+      <ul>
+        <li>核心 scan/export 行为。</li>
+        <li>metadata tree 渲染。</li>
+        <li>GUI module wiring。</li>
+        <li>ROI 到 scan parameter 的写入。</li>
+        <li>Lock-in Scan Routing。</li>
+        <li>连续/指定次数扫描序列。</li>
+        <li>Approach mock 和真实 adapter 路径。</li>
+        <li>runtime metadata updates。</li>
+        <li>Spectroscopy export。</li>
+        <li>Auto Save bundle。</li>
+      </ul>
+
+      <h2>Git 工作流</h2>
+      <pre><code>git status --short
+git diff --stat
+git add -A
+git commit -m "short version name"</code></pre>
+      <p>最近的稳定提交：</p>
+      <pre><code>6ab61e2 approach hardware integration</code></pre>
+
+      <h2>手动备份规则</h2>
+      <p>备份当前源码时应排除大型外部/生成目录：</p>
+      <ul>
+        <li><code>.git/</code></li>
+        <li><code>backups/</code></li>
+        <li><code>AFM_scan_reverse/</code></li>
+        <li><code>autosave-scan/</code></li>
+        <li><code>Hardwares/</code></li>
+      </ul>
+      <p>但 <code>afm_gui/device/vendor/</code> 必须保留，因为 GUI 会从这些固定路径 import 厂商驱动副本。</p>
+
+      <h2>最近备份</h2>
+      <pre><code>C:\Users\TopoLab\Documents\GUI\backups\afm_gui_approach_hardware_integration_20260610_020927.zip</code></pre>
+
+      <h2>维护优先级</h2>
+      <ol>
+        <li>真实硬件使用前，先用 Device Manager 和单面板读写验证。</li>
+        <li>扫描链路修改后，必须跑完整 unittest。</li>
+        <li>Approach 真实 recipe 需要逐个模式验证，不能仅凭通用控制器直接无人值守运行。</li>
+        <li>Spectroscopy 重新启用前，需要先定义真实硬件触发、bias sweep 和数据同步方式。</li>
+        <li>大图扫描前继续完善内存预算 warning 或 chunked on-disk recording。</li>
+      </ol>
+
+      <h2>文档来源</h2>
+      <p>这个 wiki 的内容来自当前代码、<code>README_GUI.md</code> 和 <code>afm_gui/docs/</code>。当架构或硬件配置变化时，应同步更新 wiki 与 Markdown 文档。</p>
+    </main>
+  </div>
+</body>
+</html>

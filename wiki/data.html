@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>数据与元数据 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>数据与元数据</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a class="active" href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>数据与元数据</h1>
+        <p>当前普通图像扫描使用二维 image 数据模型和 Gwyddion Simple Field 导出。metadata JSON 记录复现实验所需的参数、显示状态和硬件状态。</p>
+      </section>
+
+      <h2>内存数据模型</h2>
+      <pre><code>images[scan_pass][channel] -> 2D numpy array
+
+scan_pass: trace / retrace
+channel: signal_a / signal_b / signal_c / signal_d
+shape: lines x pixels</code></pre>
+
+      <h2>GSF bundle 命名</h2>
+      <p>如果在 GUI 中保存为 <code>sample01.gsf</code>，会生成：</p>
+      <pre><code>sample01_signal_a_trace.gsf
+sample01_signal_a_retrace.gsf
+sample01_signal_b_trace.gsf
+sample01_signal_b_retrace.gsf
+sample01_metadata.json</code></pre>
+      <p>每个 GSF 文件里会包含紧凑 metadata，并引用同目录下的 metadata JSON。</p>
+
+      <h2>Auto Save</h2>
+      <p>Auto Save 默认开启，默认目录为 <code>~/AFM_scans</code>。暂停和完成时都会写一组带时间戳的文件：</p>
+      <pre><code>afm_20260606_033000_pause_line0128_signal_a_trace.gsf
+afm_20260606_033000_pause_line0128_metadata.json
+
+afm_20260606_033500_finish_line0256_signal_a_trace.gsf
+afm_20260606_033500_finish_line0256_metadata.json</code></pre>
+
+      <h2>Metadata 内容</h2>
+      <table>
+        <tr><th>分类</th><th>内容</th></tr>
+        <tr><td>app</td><td>应用名、metadata schema、创建时间、GUI/CLI source。</td></tr>
+        <tr><td>scan</td><td>模式、方向、初始参数、当前/最终参数、几何、timing、channel、pass、单位。</td></tr>
+        <tr><td>display</td><td>channel image 视图、flattening、color range、ROI 等显示状态。</td></tr>
+        <tr><td>runtime</td><td>当前 line index、运行时参数修改记录。</td></tr>
+        <tr><td>storage</td><td>手动保存、Auto Save 设置、autosave event 历史。</td></tr>
+        <tr><td>device</td><td>devices.yaml 路径、设备快照、function assignment 快照。</td></tr>
+        <tr><td>stage</td><td>当前 X/Y/Z 位置和 stage 状态。</td></tr>
+        <tr><td>lock-in</td><td>channel 设置、最新读数、Scan Routing A-D。</td></tr>
+        <tr><td>approach</td><td>approach 设置和最新 progress/state。</td></tr>
+      </table>
+
+      <h2>运行时可更新参数</h2>
+      <p>这些参数扫描中修改后会从下一行生效，并写入 runtime update history：</p>
+      <ul>
+        <li><code>linear</code></li>
+        <li><code>t_sample</code></li>
+        <li><code>t_settle</code></li>
+        <li><code>t_rest</code></li>
+      </ul>
+      <p>width、height、pixels、lines、channels、scan mode 等结构参数属于下一次扫描设置。</p>
+
+      <h2>内存估算</h2>
+      <pre><code>raw bytes = passes * channels * lines * pixels * 8</code></pre>
+      <table>
+        <tr><th>扫描规模</th><th>raw image 内存</th></tr>
+        <tr><td>256 x 256, 4 channels, 2 passes</td><td>约 4 MB</td></tr>
+        <tr><td>512 x 512, 4 channels, 2 passes</td><td>约 16 MB</td></tr>
+        <tr><td>1024 x 1024, 4 channels, 2 passes</td><td>约 64 MB</td></tr>
+        <tr><td>2048 x 2048, 4 channels, 2 passes</td><td>约 256 MB</td></tr>
+        <tr><td>4096 x 4096, 4 channels, 2 passes</td><td>约 1 GB</td></tr>
+      </table>
+      <p>实际 GUI 运行时需要预留 raw data 的 3-6 倍给显示、临时数组、Qt/pyqtgraph 和导出操作。</p>
+
+      <h2>Spectroscopy 数据</h2>
+      <p>Spectroscopy MVP 使用独立 HDF5 bundle，扩展名为 <code>.afmspm.h5</code>，数据形状为：</p>
+      <pre><code>spectra[scan_pass][channel] -> lines x pixels x spectrum_points</code></pre>
+      <p>这个模块当前暂时从主 GUI 隐藏，等待真实硬件路由和触发逻辑明确后再重新启用。</p>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>整体架构 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>整体架构</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a class="active" href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>整体架构</h1>
+        <p>当前代码已经从单一 MainWindow 逐步拆成 core、device、ui panels、ui modules、data、protocol 等层。MainWindow 负责装配和跨模块协调。</p>
+      </section>
+
+      <h2>顶层分层</h2>
+      <table>
+        <tr><th>目录</th><th>职责</th></tr>
+        <tr><td><code>afm_gui/core/</code></td><td>扫描配置、扫描控制器、参数树、stage/lock-in/approach/spectroscopy 控制逻辑。</td></tr>
+        <tr><td><code>afm_gui/device/</code></td><td>设备配置加载、DeviceManager、adapter registry、mock device、真实硬件 adapter、厂商驱动副本。</td></tr>
+        <tr><td><code>afm_gui/ui/panels/</code></td><td>纯 UI 面板构建，尽量少放业务逻辑。</td></tr>
+        <tr><td><code>afm_gui/ui/modules/</code></td><td>面板逻辑、信号连接、控制器封装、跨 UI 状态管理。</td></tr>
+        <tr><td><code>afm_gui/data/</code></td><td>GSF 和 spectroscopy HDF5 数据读写。</td></tr>
+        <tr><td><code>afm_gui/config/</code></td><td>设备定义、scan mode 定义、默认布局。</td></tr>
+        <tr><td><code>tests/</code></td><td>核心逻辑和 GUI 模块 smoke tests。</td></tr>
+      </table>
+
+      <h2>扫描数据流</h2>
+      <pre><code>GUI / CLI
+  -> ScanConfig + scan_modes.yaml
+  -> DeviceManager + devices.yaml
+  -> ParameterTree
+  -> ScanController
+  -> AdapterScannerDevice / MockScannerDevice
+  -> LockinScanAcquisition
+  -> line_data_ready
+  -> images[scan_pass][channel][line, pixel]
+  -> GUI display / GSF export / metadata JSON</code></pre>
+
+      <h2>真实扫描路径</h2>
+      <p>GUI 扫描时使用 <code>AdapterScannerDevice</code>。开始扫描时，它向 Device Manager 请求 <code>scan_scanner</code> function 对应的 adapter。如果真实扫描器已连接，就在后台 worker 中逐点设置 X/Y 电压，并通过 acquisition callback 读取每个点的信号。如果没有真实扫描器连接，则回退到 mock scanning。</p>
+
+      <h2>Lock-in acquisition 路由</h2>
+      <p><code>LockinScanAcquisition</code> 读取 Lock-in panel 中应用后的 Scan Routing 表，把内部 image channel <code>signal_a</code> 到 <code>signal_d</code> 映射到具体 lock-in 设备、通道和信号。</p>
+      <pre><code>A -> zurich_HF2LI : ch1 : x
+B -> zurich_HF2LI : ch1 : theta
+C -> srs_sr830    : ch1 : r
+D -> zurich_HF2LI : ch2 : frequency</code></pre>
+      <p>如果某一路未连接或读取失败，该路填 <code>0</code>，扫描器运动不会因此被中断。这对硬件 bringup 比较友好。</p>
+
+      <h2>UI 结构</h2>
+      <p>GUI 使用 pyqtgraph DockArea。默认布局来自 <code>afm_gui/config/layout1.json</code>。Device Manager 启动时以浮动窗口打开；Lock-in Amplifier 和 Approach 可从 View 菜单打开；Spectroscopy 暂时隐藏。</p>
+
+      <h2>硬件层结构</h2>
+      <pre><code>devices.yaml
+  -> loader.py
+  -> DeviceManager
+  -> DeviceHandle
+  -> registry.py
+  -> adapter class
+  -> package-local vendor driver</code></pre>
+      <p>GUI 模块不直接 import 厂商驱动，而是通过 function assignment 和 adapter interface 使用设备。这让硬件替换尽量集中在 <code>devices.yaml</code> 和 adapter 层。</p>
+
+      <h2>当前架构重点</h2>
+      <ul>
+        <li>MainWindow 已从“所有逻辑中心”转为装配器和跨模块协调器。</li>
+        <li>扫描、stage、lock-in、approach、storage、metadata、layout、channel image 都有独立 module。</li>
+        <li>真实硬件 I/O 尽量不阻塞 GUI 主线程。</li>
+        <li>metadata 是一等公民：扫描、显示、硬件、stage、lock-in、approach 状态都进入参数树。</li>
+      </ul>
+    </main>
+  </div>
+</body>
+</html>

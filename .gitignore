@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 backups/
+releases/
 AFM_scan_reverse/
 autosave-scan/
 Hardwares/
+patent/

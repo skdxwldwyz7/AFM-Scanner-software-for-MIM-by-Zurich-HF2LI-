@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>使用流程 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>使用流程</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a class="active" href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>使用流程</h1>
+        <p>推荐从最小动作开始验证：先连接设备，再读锁相，再小步移动 stage，再小图扫描，最后尝试 Approach。</p>
+      </section>
+
+      <h2>1. 启动程序</h2>
+      <pre><code>conda run -n afm-gui python -m afm_gui.main</code></pre>
+      <p>确认 Device Manager 自动弹出。若没有弹出，可从 View 菜单打开。</p>
+
+      <h2>2. 连接硬件</h2>
+      <ol>
+        <li>在 Device Manager 中检查 <code>multifield_scanner</code>、<code>attocube_xyz</code>、<code>zurich_HF2LI</code> 的 Connection JSON。</li>
+        <li>根据当前实验室连接修改 COM 口、host、device id 或 VISA address。</li>
+        <li>点击 <code>Apply Connection</code>。</li>
+        <li>点击 <code>Connect Assigned</code>，或逐个选择设备后点击 <code>Connect</code>。</li>
+      </ol>
+
+      <h2>3. 验证 Lock-in</h2>
+      <ol>
+        <li>从 View 打开 Lock-in Amplifier。</li>
+        <li>选择 channel，设置 frequency、amplitude、phase、time constant 等。</li>
+        <li>点击 <code>Apply</code> 写入仪器。</li>
+        <li>点击 <code>Read</code>，确认 X/Y/R/Theta/Frequency 不再只是未连接时的 0。</li>
+      </ol>
+
+      <h2>4. 配置 Scan Routing</h2>
+      <p>Lock-in panel 的 Scan Routing 使用 A、B、C、D 表示内部图像信号槽：</p>
+      <pre><code>A -> zurich_HF2LI : ch1 : x
+B -> zurich_HF2LI : ch1 : theta
+C -> srs_sr830    : ch1 : r
+D -> zurich_HF2LI : ch2 : frequency</code></pre>
+      <p>点击 <code>Apply</code> 后，Channel Images 中会显示类似 <code>A-zurich_HF2LI-x</code> 的名称。</p>
+
+      <h2>5. 验证 Stage Map</h2>
+      <ol>
+        <li>确认 <code>coarse_stage</code> 已连接，默认是 <code>attocube_xyz</code>。</li>
+        <li>先使用 <code>1 um</code> 或更小步长测试 <code>+X/-X/+Y/-Y/+Z/-Z</code>。</li>
+        <li>确认方向符合实际硬件坐标。</li>
+        <li>必要时使用 <code>Move XY</code>、<code>Move Z</code> 或 home 功能。</li>
+      </ol>
+
+      <h2>6. 设置扫描参数</h2>
+      <ul>
+        <li>中心和宽高单位是 <code>V</code>，因为当前扫描器是开环电压控制。</li>
+        <li>速度单位是 <code>V/s</code>。</li>
+        <li>默认 lockin mode，默认 channel A/B 记录，默认显示 4 个 image view。</li>
+        <li>全图扫描时间会根据 lines、width、linear、settle、sample、rest 自动估算。</li>
+      </ul>
+
+      <h2>7. 扫描</h2>
+      <ul>
+        <li><code>Scan Up</code> 或 <code>Scan Down</code>：单次扫描。</li>
+        <li>Repeat mode 选择 Continuous Up/Down：连续上下交替扫描。</li>
+        <li>Repeat mode 选择 Count：按指定次数上下交替扫描。</li>
+        <li><code>Pause</code>、<code>Resume</code>、<code>Stop</code> 管理当前扫描或序列。</li>
+      </ul>
+
+      <h2>8. 使用 Channel Images</h2>
+      <ul>
+        <li>每个 image view 可以选择 channel 和 trace/retrace。</li>
+        <li>Flattening 支持 Raw、Line Mean、Plane，只影响显示，不改变保存的 raw data。</li>
+        <li>Color scale 支持自动范围和手动 min/max。</li>
+        <li>左键拖拽可创建 ROI，右键菜单可把 ROI 加载到下一次扫描参数。</li>
+      </ul>
+
+      <h2>9. Approach</h2>
+      <ol>
+        <li>先用 <code>mock.z</code> 和 mock signal 验证按钮、阈值和状态变化。</li>
+        <li>真实进针时选择 <code>coarse_stage.z</code>。</li>
+        <li>Signal device 选择已连接 lock-in，设置 channel 和 quantity。</li>
+        <li>设置 step、settle、condition、threshold、consecutive、max travel、max steps。</li>
+        <li>从非常保守的步长和 travel limit 开始，人工观察仪器响应。</li>
+      </ol>
+
+      <div class="warning">
+        当前 Approach 是通用条件控制器，不是已经验证完的 AFM/STM 自动进针 recipe。真实进针前必须确认 Z 方向、信号符号、阈值和硬件限位。
+      </div>
+
+      <h2>10. 保存数据</h2>
+      <ul>
+        <li><code>Save GSF</code> 手动保存当前图像 bundle。</li>
+        <li>Auto Save 默认开启，默认目录是 <code>~/AFM_scans</code>。</li>
+        <li>暂停和完成扫描时会自动写 timestamped bundle。</li>
+      </ul>
+    </main>
+  </div>
+</body>
+</html>

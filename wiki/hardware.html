@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>添加与连接硬件 - AFM Scan Control Wiki</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand"><h1>AFM Wiki</h1><p>硬件接入</p></div>
+      <nav class="nav">
+        <a href="index.html">首页</a>
+        <a href="installation.html">安装与运行</a>
+        <a class="active" href="hardware.html">添加与连接硬件</a>
+        <a href="architecture.html">整体架构</a>
+        <a href="modules.html">模块功能</a>
+        <a href="usage.html">使用流程</a>
+        <a href="data.html">数据与元数据</a>
+        <a href="maintenance.html">测试、备份与维护</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <h1>添加与连接硬件</h1>
+        <p>硬件接入遵循固定路径：先验证厂商驱动，再写 adapter，再注册 driver，再写 <code>devices.yaml</code>，最后接入 GUI 模块。</p>
+      </section>
+
+      <h2>当前已配置设备</h2>
+      <table>
+        <tr><th>设备名</th><th>Driver</th><th>类型</th><th>能力</th><th>默认连接</th></tr>
+        <tr><td><code>scanner_mock</code></td><td><code>mock.scanner</code></td><td>scanner</td><td><code>scanner_voltage</code></td><td>mock</td></tr>
+        <tr><td><code>multifield_scanner</code></td><td><code>multifield.scanner</code></td><td>scanner</td><td><code>scanner_voltage</code></td><td><code>COM3</code></td></tr>
+        <tr><td><code>newton_lt06</code></td><td><code>multifield.newton_lt06</code></td><td>stage</td><td><code>xyz_stage</code></td><td><code>COM5</code></td></tr>
+        <tr><td><code>attocube_xyz</code></td><td><code>attocube.anc350</code></td><td>stage</td><td><code>xyz_stage</code></td><td><code>192.168.0.9:9090</code></td></tr>
+        <tr><td><code>zurich_HF2LI</code></td><td><code>zurich.hf2li</code></td><td>lockin</td><td><code>lockin_demod</code>, <code>lockin_output</code></td><td><code>127.0.0.1:8005 DEV18388 USB</code></td></tr>
+        <tr><td><code>srs_sr830</code></td><td><code>srs.sr830</code></td><td>lockin</td><td><code>lockin_demod</code>, <code>lockin_output</code></td><td>VISA placeholder</td></tr>
+        <tr><td><code>srs_sr860</code></td><td><code>srs.sr860</code></td><td>lockin</td><td><code>lockin_demod</code>, <code>lockin_output</code></td><td>VISA placeholder</td></tr>
+        <tr><td><code>srs_sr865</code></td><td><code>srs.sr865</code></td><td>lockin</td><td><code>lockin_demod</code>, <code>lockin_output</code></td><td>VISA placeholder</td></tr>
+        <tr><td><code>srs_sr865a</code></td><td><code>srs.sr865a</code></td><td>lockin</td><td><code>lockin_demod</code>, <code>lockin_output</code></td><td>VISA placeholder</td></tr>
+      </table>
+
+      <h2>当前 function assignment</h2>
+      <table>
+        <tr><th>Function</th><th>用途</th><th>默认设备</th></tr>
+        <tr><td><code>scan_scanner</code></td><td>扫描器 XY 电压输出</td><td><code>multifield_scanner</code></td></tr>
+        <tr><td><code>coarse_stage</code></td><td>XYZ 粗定位和 Approach Z 运动</td><td><code>attocube_xyz</code></td></tr>
+        <tr><td><code>lockin</code></td><td>Lock-in 面板默认控制对象</td><td><code>zurich_HF2LI</code></td></tr>
+      </table>
+
+      <h2>在 GUI 中连接硬件</h2>
+      <ol>
+        <li>启动 GUI，Device Manager 会自动弹出。</li>
+        <li>在 Configured Devices 表中选择设备。</li>
+        <li>双击或编辑 Connection JSON，例如端口、host、device id 或 VISA address。</li>
+        <li>点击 <code>Apply Connection</code>。</li>
+        <li>点击 <code>Connect</code> 连接当前设备，或点击 <code>Connect Assigned</code> 连接被 function 使用的设备。</li>
+        <li>到对应面板执行最小动作：Stage 小步移动、Lock-in Read、Scanner 小图扫描、Approach mock/小步测试。</li>
+      </ol>
+
+      <h2>添加新硬件的标准步骤</h2>
+      <ol>
+        <li>先在 notebook 或独立脚本中验证最小硬件闭环：import、connect、read status、安全小动作、close。</li>
+        <li>把厂商驱动复制到 <code>afm_gui/device/vendor/&lt;vendor&gt;/</code>，避免依赖临时路径。</li>
+        <li>在 <code>afm_gui/device/adapters/</code> 新建 adapter，封装厂商 API。</li>
+        <li>在 <code>afm_gui/device/registry.py</code> 注册 driver 字符串。</li>
+        <li>在 <code>afm_gui/config/devices.yaml</code> 添加设备定义。</li>
+        <li>如果是功能设备，在 <code>functions</code> 中分配给对应 function。</li>
+        <li>添加 registry/adapter 单元测试，真实硬件测试保留为手动流程。</li>
+      </ol>
+
+      <h2>Adapter 需要提供什么</h2>
+      <table>
+        <tr><th>类型</th><th>常用接口</th><th>被谁使用</th></tr>
+        <tr><td>scanner</td><td><code>set_xy_voltage</code> 或等价扫描点输出</td><td>Scan worker</td></tr>
+        <tr><td>stage</td><td><code>move_relative</code>、<code>move_absolute</code>、<code>read_position</code></td><td>Stage Map、Approach</td></tr>
+        <tr><td>lockin</td><td><code>apply</code>、<code>read_demod</code>、<code>demod_index_for_channel</code></td><td>Lock-in panel、Scan Routing、Approach</td></tr>
+      </table>
+
+      <h2>Approach 真实硬件规则</h2>
+      <ul>
+        <li><code>mock.z</code> 和 mock signal 用于离线验证。</li>
+        <li><code>coarse_stage.z</code> 必须要求 <code>coarse_stage</code> 已连接。</li>
+        <li>真实信号源必须是已连接且支持 <code>read_demod</code> 的 lock-in。</li>
+        <li>如果真实硬件缺失，Approach 进入 <code>Failed</code>，不会默默回退到 mock。</li>
+        <li>Approach 运行或暂停时，Device Manager 会被锁定。</li>
+      </ul>
+
+      <div class="warning">
+        新硬件先不要从 GUI 开始调。GUI 只能帮你统一连接和调用；端口、驱动版本、厂商服务、坐标方向和安全限位必须先在最小脚本中确认。
+      </div>
+    </main>
+  </div>
+</body>
+</html>
