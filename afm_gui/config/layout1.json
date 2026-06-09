@@ -1,0 +1,110 @@
+{
+  "schema": "afm_gui.layout.v1",
+  "dock_state": {
+    "main": [
+      "horizontal",
+      [
+        [
+          "vertical",
+          [
+            [
+              "dock",
+              "Stage Map",
+              {}
+            ],
+            [
+              "dock",
+              "Parameter Tree",
+              {}
+            ],
+            [
+              "dock",
+              "Command Log",
+              {}
+            ]
+          ],
+          {
+            "sizes": [
+              505,
+              265,
+              171
+            ]
+          }
+        ],
+        [
+          "vertical",
+          [
+            [
+              "dock",
+              "Scan Parameters",
+              {}
+            ],
+            [
+              "dock",
+              "Controls",
+              {}
+            ]
+          ],
+          {
+            "sizes": [
+              509,
+              439
+            ]
+          }
+        ],
+        [
+          "vertical",
+          [
+            [
+              "dock",
+              "Channel Images",
+              {}
+            ],
+            [
+              "dock",
+              "Line Plot",
+              {}
+            ],
+            [
+              "dock",
+              "State",
+              {}
+            ],
+            [
+              "dock",
+              "Device Manager",
+              {}
+            ]
+          ],
+          {
+            "sizes": [
+              667,
+              87,
+              187,
+              0
+            ]
+          }
+        ]
+      ],
+      {
+        "sizes": [
+          525,
+          448,
+          731
+        ]
+      }
+    ],
+    "float": []
+  },
+  "visible_panels": {
+    "stage": true,
+    "images": true,
+    "line": true,
+    "parameters": true,
+    "controls": true,
+    "devices": false,
+    "state": true,
+    "metadata": true,
+    "log": true
+  }
+}

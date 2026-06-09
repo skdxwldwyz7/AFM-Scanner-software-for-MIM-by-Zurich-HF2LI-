@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+backups/
+AFM_scan_reverse/
+autosave-scan/
+Hardwares/

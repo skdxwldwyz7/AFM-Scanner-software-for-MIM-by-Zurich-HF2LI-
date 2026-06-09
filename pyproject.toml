@@ -1,0 +1,43 @@
+[project]
+name = "afm-gui"
+version = "0.1.0"
+description = "AFM scan control GUI prototype built with PyQt6, pyqtgraph, and QCoDeS."
+requires-python = ">=3.12"
+dependencies = [
+    "PyQt6",
+    "pyqtgraph",
+    "qcodes",
+    "numpy",
+    "scipy",
+    "pandas",
+    "h5py",
+    "matplotlib",
+    "pyserial",
+    "qcodes-contrib-drivers",
+    "pyyaml",
+]
+
+[project.scripts]
+afm-gui = "afm_gui.main:main"
+afm-cli = "afm_gui.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["afm_gui*"]
+exclude = ["AFM_scan_reverse*"]
+
+[tool.setuptools.package-data]
+afm_gui = [
+    "config/*.yaml",
+    "config/*.json",
+    "docs/*.md",
+    "device/vendor/multifield/*.py",
+    "device/vendor/zurich/scripts/*.py",
+    "device/vendor/attocube/python/*.py",
+]
+
+[tool.uv]
+package = true

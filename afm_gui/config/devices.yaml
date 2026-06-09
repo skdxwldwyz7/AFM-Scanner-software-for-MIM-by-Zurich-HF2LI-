@@ -1,0 +1,84 @@
+functions:
+  - name: scan_scanner
+    label: Scan Scanner
+    required_kind: scanner
+    required_capability: scanner_voltage
+    device: multifield_scanner
+
+  - name: coarse_stage
+    label: Coarse Positioning Stage
+    required_kind: stage
+    required_capability: xyz_stage
+    device: newton_lt06
+
+  - name: lockin
+    label: Lock-in Detection
+    required_kind: lockin
+    required_capability: lockin_demod
+    device: zurich_HF2LI
+
+devices:
+  - name: scanner_mock
+    label: Mock AFM Scanner
+    kind: scanner
+    driver: mock.scanner
+    enabled: true
+    capabilities:
+      - scanner_voltage
+    connection:
+      backend: mock
+
+  - name: multifield_scanner
+    label: MultiField Scanner
+    kind: scanner
+    driver: multifield.scanner
+    enabled: false
+    capabilities:
+      - scanner_voltage
+    connection:
+      backend: serial
+      port: COM3
+      baudrate: 115200
+
+  - name: newton_lt06
+    label: Newton LT06 Positioner
+    kind: stage
+    driver: multifield.newton_lt06
+    enabled: false
+    capabilities:
+      - xyz_stage
+    connection:
+      backend: serial
+      port: COM5
+      baudrate: 115200
+
+  - name: attocube_xyz
+    label: Attocube XYZ Stage
+    kind: stage
+    driver: attocube.anc350
+    enabled: false
+    capabilities:
+      - xyz_stage
+    connection:
+      backend: tcp
+      host: 192.168.0.9
+      port: 9090
+      axes:
+        x: 0
+        y: 1
+        z: 2
+
+  - name: zurich_HF2LI
+    label: Zurich HF2LI Lock-in
+    kind: lockin
+    driver: zurich.hf2li
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: labone
+      host: 127.0.0.1
+      port: 8005
+      device: DEV18388
+      interface: USB

@@ -1,0 +1,82 @@
+default_mode: lockin
+
+modes:
+  topo:
+    enabled: false
+    label: Topography
+    default_display_count: 4
+    channels:
+      - name: topography
+        label: Topography
+        unit: nm
+        enabled: true
+      - name: error
+        label: Error
+        unit: ""
+        enabled: true
+      - name: amplitude
+        label: Amplitude
+        unit: V
+        enabled: true
+      - name: phase
+        label: Phase
+        unit: deg
+        enabled: true
+
+  lockin:
+    enabled: true
+    label: Lock-in Scan
+    default_display_count: 2
+    channels:
+      - name: lockin_x
+        label: Lock-in X
+        unit: V
+        enabled: true
+      - name: lockin_phase
+        label: Lock-in Phase
+        unit: deg
+        enabled: true
+
+  spectroscopy:
+    enabled: false
+    label: Spectroscopy Map
+    default_display_count: 3
+    channels:
+      - name: topography
+        label: Topography
+        unit: nm
+        enabled: true
+      - name: current
+        label: Current
+        unit: A
+        enabled: true
+      - name: didv
+        label: dI/dV
+        unit: S
+        enabled: true
+      - name: bias
+        label: Bias
+        unit: V
+        enabled: false
+
+  lift:
+    enabled: false
+    label: Lift Mode
+    default_display_count: 4
+    channels:
+      - name: topography
+        label: Topography
+        unit: nm
+        enabled: true
+      - name: lift_height
+        label: Lift Height
+        unit: nm
+        enabled: true
+      - name: magnetic_phase
+        label: Magnetic Phase
+        unit: deg
+        enabled: true
+      - name: amplitude
+        label: Amplitude
+        unit: V
+        enabled: true
