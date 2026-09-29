@@ -1,0 +1,101 @@
+{
+  "schema": "afm_gui.layout.v1",
+  "dock_state": {
+    "main": [
+      "horizontal",
+      [
+        [
+          "vertical",
+          [
+            [
+              "dock",
+              "FM-AFM Monitor",
+              {}
+            ]
+          ],
+          {
+            "sizes": [
+              900
+            ]
+          }
+        ],
+        [
+          "vertical",
+          [
+            [
+              "dock",
+              "Scan Parameters",
+              {}
+            ],
+            [
+              "dock",
+              "Controls",
+              {}
+            ]
+          ],
+          {
+            "sizes": [
+              509,
+              439
+            ]
+          }
+        ],
+        [
+          "vertical",
+          [
+            [
+              "dock",
+              "Channel Images",
+              {}
+            ],
+            [
+              "dock",
+              "Line Plot",
+              {}
+            ],
+            [
+              "dock",
+              "State",
+              {}
+            ],
+            [
+              "dock",
+              "Device Manager",
+              {}
+            ]
+          ],
+          {
+            "sizes": [
+              667,
+              87,
+              187,
+              0
+            ]
+          }
+        ]
+      ],
+      {
+        "sizes": [
+          360,
+          440,
+          800
+        ]
+      }
+    ],
+    "float": []
+  },
+  "visible_panels": {
+    "stage": false,
+    "images": true,
+    "line": true,
+    "parameters": true,
+    "controls": true,
+    "devices": true,
+    "state": true,
+    "metadata": false,
+    "log": false,
+    "fm_afm": true,
+    "approach": false,
+    "lockin": false
+  }
+}

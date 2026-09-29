@@ -43,13 +43,14 @@ class CoreSmokeTests(unittest.TestCase):
     def tearDown(self) -> None:
         Instrument.close_all()
 
-    def test_default_scan_mode_uses_lockin_mode_only(self) -> None:
+    def test_default_scan_mode_uses_fm_afm(self) -> None:
         registry = load_scan_modes()
 
-        self.assertEqual(registry.default.name, "lockin")
+        self.assertEqual(registry.default.name, "fm_afm")
         self.assertEqual(registry.default.default_display_count, 4)
-        self.assertEqual(set(registry.modes), {"lockin"})
-        self.assertEqual(registry.default.default_channels, ("signal_a", "signal_b"))
+        self.assertEqual(set(registry.modes), {"fm_afm", "lockin"})
+        self.assertIn("auxout4", registry.default.default_channels)
+        self.assertIn("pll_df", registry.default.default_channels)
 
     def test_lockin_scan_mode_uses_lockin_channels(self) -> None:
         registry = load_scan_modes()
@@ -80,9 +81,9 @@ class CoreSmokeTests(unittest.TestCase):
         self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["output_index"], 1)
         self.assertEqual(device_by_name["zurich_HF2LI"].connection["channels"]["ch2"]["amplitude_index"], 7)
         self.assertEqual(function_by_name["scan_scanner"].required_capability, "scanner_voltage")
-        self.assertEqual(function_by_name["scan_scanner"].device, "multifield_scanner")
+        self.assertEqual(function_by_name["scan_scanner"].device, "zurich_HF2LI")
         self.assertEqual(function_by_name["coarse_stage"].required_capability, "xyz_stage")
-        self.assertEqual(function_by_name["coarse_stage"].device, "attocube_xyz")
+        self.assertEqual(function_by_name["coarse_stage"].device, "")
 
     def test_parameter_tree_tracks_initial_and_current_scan_parameters(self) -> None:
         initial = ScanConfig(linear=0.2, t_sample=0.001, channels=("signal_a",))
@@ -103,6 +104,7 @@ class CoreSmokeTests(unittest.TestCase):
         manager = DeviceManager()
 
         self.assertIn("scanner_mock", manager.devices_for_capability("scanner_voltage"))
+        manager.functions["scan_scanner"].required_kind = "scanner"
         manager.assign_function("scan_scanner", "scanner_mock")
         manager.connect_device("scanner_mock")
 

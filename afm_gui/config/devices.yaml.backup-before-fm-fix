@@ -1,0 +1,157 @@
+functions:
+  - name: scan_scanner
+    label: Scan Scanner
+    required_kind: lockin
+    required_capability: scanner_voltage
+    device: zurich_HF2LI
+
+  - name: coarse_stage
+    label: Coarse Positioning Stage
+    required_kind: stage
+    required_capability: xyz_stage
+    device: ""
+
+  - name: lockin
+    label: Lock-in Detection
+    required_kind: lockin
+    required_capability: lockin_demod
+    device: zurich_HF2LI
+
+devices:
+  - name: scanner_mock
+    label: Mock AFM Scanner
+    kind: scanner
+    driver: mock.scanner
+    enabled: false
+    capabilities:
+      - scanner_voltage
+    connection:
+      backend: mock
+
+  - name: multifield_scanner
+    label: MultiField Scanner
+    kind: scanner
+    driver: multifield.scanner
+    enabled: false
+    capabilities:
+      - scanner_voltage
+    connection:
+      backend: serial
+      port: COM3
+      baudrate: 115200
+
+  - name: newton_lt06
+    label: Newton LT06 Positioner
+    kind: stage
+    driver: multifield.newton_lt06
+    enabled: false
+    capabilities:
+      - xyz_stage
+    connection:
+      backend: serial
+      port: COM5
+      baudrate: 115200
+
+  - name: attocube_xyz
+    label: Attocube XYZ Stage
+    kind: stage
+    driver: attocube.anc350
+    enabled: false
+    capabilities:
+      - xyz_stage
+    connection:
+      backend: tcp
+      host: 192.168.0.9
+      port: 9090
+      axes:
+        x: 0
+        y: 1
+        z: 2
+
+  - name: zurich_HF2LI
+    label: Zurich HF2LI Lock-in
+    kind: lockin
+    driver: zurich.hf2li
+    enabled: true
+    capabilities:
+      - lockin_demod
+      - lockin_output
+      - scanner_voltage
+      - fm_afm_readout
+    connection:
+      backend: labone
+      host: 127.0.0.1
+      port: 8005
+      device: DEV18388
+      interface: USB
+      channels:
+        ch1:
+          demod_index: 0
+          input_index: 0
+          oscillator_index: 0
+          output_index: 0
+          amplitude_index: 6
+        ch2:
+          demod_index: 1
+          input_index: 1
+          oscillator_index: 1
+          output_index: 1
+          amplitude_index: 7
+
+      fm_afm:
+        enabled: true
+        pll_index: 0
+        pid_index: 0
+        xy_min_v: 0.0
+        xy_max_v: 5.0
+        max_step_v: 0.01
+        z_min_v: 0.0
+        z_max_v: 5.0
+
+  - name: srs_sr830
+    label: SRS SR830 Lock-in
+    kind: lockin
+    driver: srs.sr830
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: GPIB0::8::INSTR
+
+  - name: srs_sr860
+    label: SRS SR860 Lock-in
+    kind: lockin
+    driver: srs.sr860
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: USB0::0xB506::0x2000::INSTR
+
+  - name: srs_sr865
+    label: SRS SR865 Lock-in
+    kind: lockin
+    driver: srs.sr865
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: USB0::0xB506::0x2000::INSTR
+
+  - name: srs_sr865a
+    label: SRS SR865A Lock-in
+    kind: lockin
+    driver: srs.sr865a
+    enabled: false
+    capabilities:
+      - lockin_demod
+      - lockin_output
+    connection:
+      backend: visa
+      address: USB0::0xB506::0x2000::INSTR

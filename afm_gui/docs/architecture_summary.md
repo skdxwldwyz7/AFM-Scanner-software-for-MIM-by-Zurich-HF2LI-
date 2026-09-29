@@ -4,7 +4,23 @@
 
 AFM Scan Control is a PyQt6, pyqtgraph, and QCoDeS-based prototype for AFM scan
 control. The current hardware layer can connect configured adapters through the
-Device Manager while preserving a mock fallback for offline development.
+Device Manager while preserving a mock fallback for legacy offline development.
+The default FM-AFM GUI path requires the HF2LI and explicitly disables fallback.
+
+## FM-AFM extension
+
+The existing layers remain intact. `ZurichHF2LIAdapter` now also provides XY
+scanner output through `HF2FMInterface`: AUX1/2 offsets are the only new writable
+nodes. `FMAcquisition` reads the selected channels and validates feedback state;
+`AdapterScannerDevice` executes bounded XY ramps in its existing worker thread.
+PLL/PID/AUX3/AUX4 remain owned by LabOne. The MultiField controller is not a
+software dependency in this profile.
+
+`FMAFMModule` owns background readout, three time plots, bounded CSV history and
+manual XY; it shares a serialized HF2 I/O lock with scanning. The default
+`devices.yaml`, `scan_modes.yaml` and `layout_fm_afm.json` select this workflow.
+See `fm_afm_usage.md` for wiring, units, limits and polling limitations. Legacy
+stage, A–D lock-in and spectroscopy paths described below remain separate.
 
 The detailed progress archive is stored in:
 

@@ -3,7 +3,22 @@
 This repository contains the current AFM scan-control GUI prototype. It is a
 fresh framework built with PyQt6, pyqtgraph, and QCoDeS. The GUI can run fully
 offline through mock fallbacks, and it can also connect configured hardware
-adapters through the Device Manager.
+adapters through the Device Manager. The default GUI profile is now **FM-AFM
+with Zurich HF2LI AUX1/2 XY control**; this profile requires a connected HF2LI
+and never falls back to simulated data.
+
+## FM-AFM / HF2LI
+
+Read the [FM-AFM setup and usage guide](afm_gui/docs/fm_afm_usage.md) first.
+The GUI reads PLL/PID, AUX1–4, and demodulator signals, provides three selectable
+time plots and CSV history, and writes only AUX1/2 offsets. LabOne owns PLL/PID,
+excitation, AUX3 and AUX4. The scanner controller is an OLAI analog amplifier.
+
+Install HF2 support with `python -m pip install -e ".[hf2]"`. On this workstation,
+the tested environment can launch with
+`.\.venv312\Scripts\python.exe -m afm_gui.main` from this directory.
+The legacy CLI/mock examples below remain for development, not for driving this
+FM-AFM wiring. Verify configured voltage limits and device serial before motion.
 
 ## Current Scope
 

@@ -111,6 +111,10 @@ class LockInModule(QObject):
         self.lockin_apply_routes.clicked.connect(lambda _checked=False: self.apply_scan_routing())
 
     def apply_settings(self, channel: str) -> None:
+        adapter = self._lockin_adapter()
+        if getattr(adapter, "fm_readonly", False):
+            self._log_callback("FM-AFM: configure excitation and demodulators in LabOne; this panel is read-only")
+            return
         if channel not in self.active_channels:
             self._log_callback(f"Lock-in {channel} is not available for the assigned device")
             return
@@ -188,7 +192,11 @@ class LockInModule(QObject):
     def _sync_available_channels(self) -> None:
         channels = self._available_channels()
         self.active_channels = channels
+        handle = self._device_manager.handle_for_function("lockin") if self._device_manager else None
+        readonly = bool(handle and (handle.config.connection.get("fm_afm") or {}).get("enabled", False))
         for channel, controls in self.lockin_channels.items():
+            for key in ("apply", "frequency", "amplitude", "phase", "time_constant", "sensitivity", "reserve", "output_enabled"):
+                controls[key].setEnabled(not readonly)
             box = controls.get("box")
             if box is not None:
                 box.setVisible(channel in channels)

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
+import math
 from pathlib import Path
+import time
 
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -32,6 +35,7 @@ class ScanController(QObject):
     export_finished = pyqtSignal(str)
     runtime_parameters_changed = pyqtSignal(object)
     scan_progress_changed = pyqtSignal(int, int, int, int, str)
+    scan_failed = pyqtSignal(str)
 
     def __init__(self, device: object, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -44,12 +48,18 @@ class ScanController(QObject):
         self.current_line_index = -1
         self._running = False
         self._paused = False
+        self.scan_report_context: dict[str, object] = {}
+        self._scan_started_monotonic = 0.0
 
         self.device.line_data_ready.connect(self._on_line_data)
         self.device.command_logged.connect(lambda text: self.log_message.emit(f"> {text}"))
         self.device.scan_finished.connect(self._on_finished)
+        if hasattr(self.device, "scan_report_ready"):
+            self.device.scan_report_ready.connect(self._on_scan_report_ready)
         if hasattr(self.device, "scan_progress_changed"):
             self.device.scan_progress_changed.connect(self._on_scan_progress)
+        if hasattr(self.device, "scan_failed"):
+            self.device.scan_failed.connect(self._on_failed)
 
     @property
     def is_running(self) -> bool:
@@ -65,19 +75,33 @@ class ScanController(QObject):
         direction: int,
         parameter_tree: ParameterTree | None = None,
     ) -> None:
+        if self._running:
+            raise RuntimeError("A scan is already active")
+        lines = generate_scan_lines(config, direction)
+        if hasattr(self.device, "validate_scan"):
+            self.device.validate_scan(config, lines)
         self.config = config
         self.direction = direction
-        self.lines = generate_scan_lines(config, direction)
+        self.lines = lines
         self.images = self._empty_images(config)
         self.parameter_tree = parameter_tree or build_parameter_tree(config, direction)
         self.current_line_index = -1
         self._running = True
         self._paused = False
+        started_utc = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        self._scan_started_monotonic = time.monotonic()
+        self.scan_report_context = {
+            "scan_id": started_utc,
+            "status": "running",
+            "started_utc": started_utc,
+        }
+        self.parameter_tree.set_path("runtime.started_utc", started_utc)
         self.scan_progress_changed.emit(0, config.lines, 0, config.pixels, "trace")
 
         if hasattr(self.device, "configure_scan"):
             self.device.configure_scan(config, self.lines)
-        self.device.send_commands(self._first_line_commands())
+        if config.scan_mode != "fm_afm":
+            self.device.send_commands(self._first_line_commands())
         interval_ms = int(max(20.0, line_time(config) * 1000.0))
         self.device.start_scan(config.lines, config.pixels, interval_ms, config.channels)
         self.image_changed.emit(self.images)
@@ -89,7 +113,8 @@ class ScanController(QObject):
     def pause(self) -> None:
         if not self._running or self._paused:
             return
-        self.device.send_commands([cmd.pause()])
+        if self.config.scan_mode != "fm_afm":
+            self.device.send_commands([cmd.pause()])
         self.device.pause()
         self._paused = True
         self.state_changed.emit("Paused")
@@ -97,7 +122,8 @@ class ScanController(QObject):
     def resume(self) -> None:
         if not self._running or not self._paused:
             return
-        self.device.send_commands([cmd.unpause()])
+        if self.config.scan_mode != "fm_afm":
+            self.device.send_commands([cmd.unpause()])
         self.device.resume(int(max(20.0, line_time(self.config) * 1000.0)))
         self._paused = False
         self.state_changed.emit("Scanning")
@@ -105,7 +131,8 @@ class ScanController(QObject):
     def stop(self) -> None:
         if not self._running:
             return
-        self.device.send_commands([cmd.stop()])
+        if self.config.scan_mode != "fm_afm":
+            self.device.send_commands([cmd.stop()])
         self.device.stop()
 
     def update_runtime_params(self, **params: float) -> dict[str, float]:
@@ -117,8 +144,13 @@ class ScanController(QObject):
         cleaned = {name: float(value) for name, value in params.items() if value is not None}
         if not cleaned:
             return {}
+        for name, value in cleaned.items():
+            if not math.isfinite(value) or value < 0 or (name == "linear" and value == 0):
+                raise ValueError(f"Invalid runtime parameter {name}={value}")
 
         self.config = replace(self.config, **cleaned)
+        if hasattr(self.device, "update_scan_config"):
+            self.device.update_scan_config(self.config)
         if self._running and not self._paused:
             self.device.set_line_interval(int(max(20.0, line_time(self.config) * 1000.0)))
 
@@ -173,6 +205,7 @@ class ScanController(QObject):
                         "ScanPass": scan_pass,
                         "MetadataFile": metadata_filename,
                     },
+                    preserve_missing=self.config.scan_mode == "fm_afm",
                 )
                 exported.append(path)
 
@@ -265,7 +298,7 @@ class ScanController(QObject):
         start, end = self.lines[line_index]
         self.probe_position_changed.emit(float(end[0]), float(end[1]))
         next_line = line_index + 1
-        if next_line < len(self.lines):
+        if next_line < len(self.lines) and self.config.scan_mode != "fm_afm":
             self.device.send_commands(self._next_line_commands(next_line))
 
     def _on_scan_progress(
@@ -278,6 +311,20 @@ class ScanController(QObject):
     ) -> None:
         self.scan_progress_changed.emit(line_index, total_lines, pixel_index, total_pixels, scan_pass)
 
+    def _on_scan_report_ready(self, context: object) -> None:
+        if isinstance(context, dict):
+            scan_id = self.scan_report_context.get("scan_id")
+            self.scan_report_context.update(context)
+            if scan_id:
+                self.scan_report_context["scan_id"] = scan_id
+            error = str(context.get("error", "") or "")
+            if error:
+                previous_error = self.parameter_tree.data.get("runtime", {}).get("error", "")
+                self.parameter_tree.set_path("runtime.error", error)
+                if previous_error != error:
+                    self.scan_failed.emit(error)
+            self.parameter_tree.set_path("runtime.scan_report_context", dict(self.scan_report_context))
+
     def _image_line_index(self, acquisition_line_index: int) -> int:
         if self.direction == ScanDirection.DOWN:
             return self.config.lines - 1 - acquisition_line_index
@@ -286,9 +333,27 @@ class ScanController(QObject):
     def _on_finished(self) -> None:
         sync_scan_config_to_tree(self.parameter_tree, self.config, self.direction)
         self.parameter_tree.set_path("runtime.completed_utc", self.parameter_tree.data["scan"]["parameters"]["updated_utc"])
+        if self.scan_report_context.get("status") == "running":
+            error = self.parameter_tree.data.get("runtime", {}).get("error", "")
+            incomplete = self.current_line_index + 1 < self.config.lines
+            self.scan_report_context["status"] = "failed" if error else "stopped" if incomplete else "completed"
+            self.scan_report_context["error"] = str(error or "")
+            self.scan_report_context["finished_utc"] = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+            self.scan_report_context["duration_s"] = max(0.0, time.monotonic() - self._scan_started_monotonic)
+        self.parameter_tree.set_path("runtime.scan_report_context", dict(self.scan_report_context))
         self._running = False
         self._paused = False
-        self.state_changed.emit("Idle")
         self.scan_progress_changed.emit(0, max(1, self.config.lines), 0, max(1, self.config.pixels), "idle")
         self.log_message.emit("Scan finished")
-        self.current_line_index = -1
+        # Idle callbacks save this scan and may synchronously start the next one.
+        self.state_changed.emit("Idle")
+        if not self._running:
+            self.current_line_index = -1
+
+    def _on_failed(self, message: str) -> None:
+        previous_error = self.parameter_tree.data.get("runtime", {}).get("error", "")
+        self.parameter_tree.set_path("runtime.error", message)
+        self.scan_report_context["status"] = "failed"
+        self.scan_report_context["error"] = message
+        if previous_error != message:
+            self.scan_failed.emit(message)

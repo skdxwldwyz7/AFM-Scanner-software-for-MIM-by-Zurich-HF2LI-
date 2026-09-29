@@ -25,6 +25,10 @@ class GuiModuleSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         Instrument.close_all()
         self.window = MainWindow()
+        # Legacy panel regression cases explicitly exercise the retained lock-in mode.
+        combo = self.window.scan_module.scan_mode
+        combo.setCurrentIndex(combo.findData("lockin"))
+        self.window.auto_save_enabled.setChecked(False)
         self.app.processEvents()
 
     def tearDown(self) -> None:
@@ -251,6 +255,7 @@ class GuiModuleSmokeTests(unittest.TestCase):
                 return {"r_v": 2.0 + float(kwargs.get("demod_index", 0))}
 
         stage = FakeStageAdapter()
+        self.window.device_manager.assign_function("coarse_stage", "attocube_xyz")
         stage_handle = self.window.device_manager.handles["attocube_xyz"]
         stage_handle.connected = True
         stage_handle.adapter = stage

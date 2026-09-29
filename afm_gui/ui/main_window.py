@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QMainWindow,
     QMessageBox,
+    QScrollArea,
     QSpinBox,
     QWidget,
 )
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
 from afm_gui.core.scan_config import ScanDirection
 from afm_gui.core.scan_controller import ScanController
 from afm_gui.core.lockin_acquisition import LockinScanAcquisition, ZeroScanAcquisition
+from afm_gui.core.fm_afm import FMAcquisition
 from afm_gui.device.scan_device import AdapterScannerDevice
 from afm_gui.ui.modules.approach import ApproachModule
 from afm_gui.ui.modules.channel_images import ChannelImagesModule
@@ -29,13 +31,14 @@ from afm_gui.ui.modules.scan_sequence import ScanSequenceModule
 from afm_gui.ui.modules.spectroscopy import SpectroscopyModule
 from afm_gui.ui.modules.stage import StageModule
 from afm_gui.ui.modules.storage import StorageModule
+from afm_gui.ui.modules.fm_afm import FMAFMModule
 from afm_gui.ui.panels.command_log import build_command_log_panel
 from afm_gui.ui.panels.controls import build_controls_panel
 from afm_gui.ui.panels.status import build_status_panel
 
 
 class MainWindow(QMainWindow):
-    STARTUP_LAYOUT = "layout1.json"
+    STARTUP_LAYOUT = "layout_fm_afm.json"
 
     def __init__(self) -> None:
         super().__init__()
@@ -66,8 +69,10 @@ class MainWindow(QMainWindow):
             self,
         )
         self.scan_module.set_mode_changed_callback(self.channel_images_module.reset_for_mode)
+        self.scan_module.set_channel_changed_callback(self.channel_images_module.sync_scan_channels)
         self.stage_module = StageModule(self._append_log, self.device_manager, self)
         self.lockin_module = LockInModule(self._append_log, self.device_manager, self)
+        self.fm_afm_module = FMAFMModule(self.device_manager, self._append_log, self)
         self.approach_module = ApproachModule(self._append_log, self.device_manager, self)
         self.storage_module = StorageModule(
             self.controller,
@@ -93,6 +98,9 @@ class MainWindow(QMainWindow):
         self.stage_controller = self.stage_module.controller
         self.lockin_controllers = self.lockin_module.controllers
         self.lockin_controller = self.lockin_module.primary_controller
+        self._last_scan_mode = None
+        self.scan_module.set_mode_changed_callback(self._on_scan_mode_changed)
+        self.scan_module.set_start_guard(self._validate_scan_start)
         self.panel_actions: dict[str, QAction] = {}
         self.panels: dict[str, dict[str, object]] = {}
         self.default_layout_state: dict[str, object] = {}
@@ -113,6 +121,7 @@ class MainWindow(QMainWindow):
         self.control_dock = Dock("Controls", size=(360, 120))
         self.device_dock = Dock("Device Manager", size=(900, 520))
         self.stage_dock = Dock("Stage Map", size=(360, 430))
+        self.fm_afm_dock = Dock("FM-AFM Monitor", size=(520, 780))
         self.lockin_dock = Dock("Lock-in Amplifier", size=(760, 420))
         self.approach_dock = Dock("Approach", size=(760, 520))
         self.spectroscopy_dock = Dock("Spectroscopy", size=(980, 560))
@@ -120,12 +129,16 @@ class MainWindow(QMainWindow):
         self.metadata_dock = Dock("Parameter Tree", size=(360, 280))
         self.log_dock = Dock("Command Log", size=(360, 180))
 
-        self.image_dock.addWidget(self.image_grid_widget)
+        image_scroll = QScrollArea()
+        image_scroll.setWidgetResizable(True)
+        image_scroll.setWidget(self.image_grid_widget)
+        self.image_dock.addWidget(image_scroll)
         self.line_dock.addWidget(self.line_plot)
         self.parameter_dock.addWidget(self._parameter_box())
         self.control_dock.addWidget(self._control_box())
         self.device_dock.addWidget(self._device_manager_box())
         self.stage_dock.addWidget(self._stage_map_box())
+        self.fm_afm_dock.addWidget(self.fm_afm_module.widget)
         self.lockin_dock.addWidget(self._lockin_box())
         self.approach_dock.addWidget(self._approach_box())
         self.spectroscopy_dock.addWidget(self._spectroscopy_box())
@@ -141,6 +154,7 @@ class MainWindow(QMainWindow):
         )
 
         self.dock_area.addDock(self.stage_dock, "left")
+        self.dock_area.addDock(self.fm_afm_dock, "left", self.stage_dock)
         self.dock_area.addDock(self.parameter_dock, "right", self.stage_dock)
         self.dock_area.addDock(self.image_dock, "right", self.parameter_dock)
         self.dock_area.addDock(self.control_dock, "bottom", self.stage_dock)
@@ -183,6 +197,7 @@ class MainWindow(QMainWindow):
 
     def _register_panels(self) -> None:
         self.panels = {
+            "fm_afm": {"title": "FM-AFM Monitor", "dock": self.fm_afm_dock, "position": "left", "relative": None},
             "stage": {"title": "Stage Map", "dock": self.stage_dock, "position": "left", "relative": None},
             "images": {"title": "Channel Images", "dock": self.image_dock, "position": "right", "relative": "parameters"},
             "line": {"title": "Line Plot", "dock": self.line_dock, "position": "bottom", "relative": "images"},
@@ -321,22 +336,55 @@ class MainWindow(QMainWindow):
         self.controller.scan_progress_changed.connect(self._show_scan_progress)
         self.controller.runtime_parameters_changed.connect(lambda _: self.metadata_module.refresh())
         self.approach_module.controller.state_changed.connect(self._on_approach_state_changed)
+        self.controller.scan_failed.connect(self.scan_sequence_module.cancel_on_error)
+        self.fm_afm_module.activity_changed.connect(self._sync_hardware_activity)
 
     def _on_controller_state_changed(self, state: str) -> None:
         self.state_label.setText(state)
+        error = self.controller.parameter_tree.data.get("runtime", {}).get("error") if state == "Idle" else None
+        self.state_label.setToolTip(str(error or ""))
+        if error:
+            self.state_label.setText("Stopped (error — hover for details / see Command Log)")
+        self.state_label.setWordWrap(True)
         self._update_scan_button_state(state)
-        self.device_module.set_hardware_locked(state in {"Scanning", "Paused"})
+        self.fm_afm_module.set_scan_active(state in {"Scanning", "Paused"})
+        self.scan_module.set_running(state in {"Scanning", "Paused"})
+        self._sync_hardware_activity()
         if state == "Paused":
             self.storage_module.auto_save("pause")
         if state == "Idle":
+            self.storage_module.write_scan_report()
             self.storage_module.auto_save("finish")
             self.metadata_module.refresh()
             self.scan_sequence_module.continue_if_needed()
 
     def _on_approach_state_changed(self, state: str) -> None:
-        approach_locked = state in {"Approaching", "Paused"}
-        scan_locked = self.controller.is_running or self.controller.is_paused
-        self.device_module.set_hardware_locked(approach_locked or scan_locked)
+        self.fm_afm_module.set_external_motion(state in {"Approaching", "Paused"})
+        self._sync_hardware_activity()
+
+    def _sync_hardware_activity(self) -> None:
+        scan = self.controller.is_running or self.controller.is_paused
+        approach = self.approach_module.controller.is_running or self.approach_module.controller.is_paused
+        self.device_module.set_hardware_locked(scan or approach or self.fm_afm_module.busy)
+        if not scan:
+            self.scan_up.setEnabled(not approach and not self.fm_afm_module.moving)
+            self.scan_down.setEnabled(not approach and not self.fm_afm_module.moving)
+
+    def _validate_scan_start(self) -> None:
+        if self.fm_afm_module.moving or self.approach_module.controller.is_running:
+            raise RuntimeError("Stop manual XY/approach motion before scanning")
+        if self.device_module._connection_busy:
+            raise RuntimeError("Wait for the device connection to finish")
+
+    def _on_scan_mode_changed(self, mode) -> None:
+        self.channel_images_module.reset_for_mode(mode)
+        if mode.name == "fm_afm" and self._last_scan_mode != "fm_afm":
+            self.scan_module.xc.setValue(2.5)
+            self.scan_module.yc.setValue(2.5)
+            self.scan_module.width.setValue(0.1)
+            self.scan_module.height.setValue(0.1)
+            self.scan_module.linear.setValue(0.05)
+        self._last_scan_mode = mode.name
 
     def _update_scan_button_state(self, state: str) -> None:
         scanning = state == "Scanning"
@@ -400,9 +448,15 @@ class MainWindow(QMainWindow):
             "stage": self.stage_module.snapshot(),
             "lockin": self.lockin_module.snapshot(),
             "approach": self.approach_module.snapshot(),
+            "fm_afm": self.fm_afm_module.snapshot(),
         }
 
     def _scan_acquisition_callback(self):
+        if self.scan_module.current_mode.name == "fm_afm":
+            adapter = self.device_manager.adapter_for_function("scan_scanner")
+            if adapter is None or not hasattr(adapter, "read_fm_snapshot"):
+                raise RuntimeError("FM-AFM scanner must be the connected HF2LI")
+            return FMAcquisition(adapter)
         adapters = self.lockin_module.scan_adapters()
         if not adapters:
             return ZeroScanAcquisition()
@@ -487,13 +541,22 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event: QEvent) -> None:
-        self.controller.stop()
+        self.scan_sequence_module.stop()
         if hasattr(self.device, "wait_for_finished"):
-            self.device.wait_for_finished(5000)
+            if not self.device.wait_for_finished(5000):
+                self._append_log("Waiting for XY scan to stop; close again after hardware I/O returns")
+                event.ignore()
+                return
+        if not self.fm_afm_module.shutdown(5000):
+            self._append_log("Waiting for HF2 monitor/XY worker to stop; close again after hardware I/O returns")
+            event.ignore()
+            return
         if hasattr(self.spectroscopy_module.controller, "stop"):
             self.spectroscopy_module.controller.stop()
         self.approach_module.controller.abort()
-        self.device_module.wait_for_connections(5000)
+        if not self.device_module.wait_for_connections(5000):
+            event.ignore()
+            return
         self.device_module.set_hardware_locked(False)
         self.device_manager.disconnect_all()
         event.accept()

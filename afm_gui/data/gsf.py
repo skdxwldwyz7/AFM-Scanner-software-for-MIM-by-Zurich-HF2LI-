@@ -25,6 +25,7 @@ def write_gsf(
     z_unit: str = "",
     title: str = "",
     metadata: dict[str, str | int | float] | None = None,
+    preserve_missing: bool = False,
 ) -> None:
     """Write one 2D channel as a Gwyddion Simple Field file."""
 
@@ -49,7 +50,7 @@ def write_gsf(
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0).astype("<f4", copy=False)
+    body = (array if preserve_missing else np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)).astype("<f4", copy=False)
 
     with path.open("wb") as file:
         file.write(_GSF_MAGIC)

@@ -89,6 +89,11 @@ class ScanSequenceModule(QObject):
         self._remaining = 0
         self.controller.stop()
 
+    def cancel_on_error(self, message: str) -> None:
+        self._active = False
+        self._remaining = 0
+        self._log_callback(f"Scan sequence cancelled: {message}")
+
     def on_repeat_mode_changed(self) -> None:
         self.update_controls_enabled(not self.controller.is_running and not self.controller.is_paused)
 

@@ -31,6 +31,8 @@ class ScanModule(QObject):
         self._metadata_refresh = metadata_refresh
         self._log_callback = log_callback
         self._mode_changed_callback: Callable[[ScanModeConfig], None] | None = None
+        self._channel_changed_callback: Callable[[tuple[str, ...]], None] | None = None
+        self._start_guard = None
         self.mode_registry = load_scan_modes()
         self.current_mode = self.mode_registry.default
         self.widget = build_scan_parameters_panel(self)
@@ -40,7 +42,12 @@ class ScanModule(QObject):
     def set_mode_changed_callback(self, callback: Callable[[ScanModeConfig], None]) -> None:
         self._mode_changed_callback = callback
 
+    def set_channel_changed_callback(self, callback: Callable[[tuple[str, ...]], None]) -> None:
+        self._channel_changed_callback = callback
+
     def start(self, direction: int) -> None:
+        if self._start_guard is not None:
+            self._start_guard()
         config = self.config()
         tree = build_parameter_tree(
             config,
@@ -53,12 +60,15 @@ class ScanModule(QObject):
         self.controller.start(config, direction, tree)
         self._metadata_refresh()
 
+    def set_start_guard(self, guard) -> None:
+        self._start_guard = guard
+
+    def set_running(self, running: bool) -> None:
+        for control in (self.scan_mode, self.xc, self.yc, self.width, self.height, self.angle, self.pixels, self.lines, self.channel_widget):
+            control.setEnabled(not running)
+
     def config(self) -> ScanConfig:
-        channels = tuple(
-            channel for channel, checkbox in self.channel_checks.items() if checkbox.isChecked()
-        )
-        if not channels:
-            channels = ("topography",)
+        channels = self.selected_channels()
         return ScanConfig(
             xc=self.xc.value(),
             yc=self.yc.value(),
@@ -107,6 +117,7 @@ class ScanModule(QObject):
         self._rebuild_channel_checks(mode)
         if self._mode_changed_callback is not None:
             self._mode_changed_callback(mode)
+        self._notify_channel_selection()
         self.update_scan_time_estimate()
         self._log_callback(f"Loaded scan mode: {mode.label}")
 
@@ -168,8 +179,19 @@ class ScanModule(QObject):
             label = channel.label if not channel.unit else f"{channel.label} ({channel.unit})"
             checkbox = QCheckBox(label)
             checkbox.setChecked(channel.enabled)
+            checkbox.toggled.connect(lambda _checked: self._notify_channel_selection())
             self.channel_checks[channel.name] = checkbox
             self.channel_layout.addWidget(checkbox)
+
+    def selected_channels(self) -> tuple[str, ...]:
+        selected = tuple(
+            channel for channel, checkbox in self.channel_checks.items() if checkbox.isChecked()
+        )
+        return selected or self.current_mode.default_channels[:1]
+
+    def _notify_channel_selection(self) -> None:
+        if self._channel_changed_callback is not None:
+            self._channel_changed_callback(self.selected_channels())
 
     @staticmethod
     def _double(

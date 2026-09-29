@@ -4,7 +4,7 @@ from collections.abc import Callable
 import json
 from typing import Any
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QWidget
 
 from afm_gui.device.loader import DeviceManager
@@ -176,7 +176,7 @@ class DeviceModule(QObject):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._finish_device_connection)
-        worker.finished.connect(thread.quit)
+        worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(lambda finished_thread=thread: self._discard_connection_thread(finished_thread))
         thread.finished.connect(thread.deleteLater)

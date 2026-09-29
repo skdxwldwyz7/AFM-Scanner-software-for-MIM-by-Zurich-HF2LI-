@@ -21,6 +21,9 @@ dependencies = [
 afm-gui = "afm_gui.main:main"
 afm-cli = "afm_gui.cli:main"
 
+[project.optional-dependencies]
+hf2 = ["zhinst-qcodes", "zhinst-core", "zhinst-toolkit"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

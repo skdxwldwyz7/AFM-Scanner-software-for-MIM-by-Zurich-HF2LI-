@@ -5,6 +5,7 @@ import sys
 from typing import Any
 
 from afm_gui.device.paths import add_first_existing_path
+from afm_gui.device.adapters.hf2_fm import HF2FMInterface, serialized_io
 
 ZURICH_SCRIPTS_DIR = add_first_existing_path(
     "afm_gui/device/vendor/zurich/scripts",
@@ -13,8 +14,8 @@ ZURICH_SCRIPTS_DIR = add_first_existing_path(
 )
 
 
-class ZurichHF2LIAdapter:
-    capabilities = ("lockin_demod", "lockin_output")
+class ZurichHF2LIAdapter(HF2FMInterface):
+    capabilities = ("lockin_demod", "lockin_output", "scanner_voltage", "fm_afm_readout")
     lockin_channels = ("ch1", "ch2")
     DEFAULT_CHANNELS = {
         "ch1": {"demod_index": 0, "input_index": 0, "oscillator_index": 0, "output_index": 0, "amplitude_index": 6},
@@ -27,12 +28,15 @@ class ZurichHF2LIAdapter:
         self.connection = dict(connection)
         self.device_id = str(connection.get("device", "DEV18388"))
         self.channels = self._parse_channels(connection.get("channels"))
+        self._init_fm()
 
+    @serialized_io
     def status(self) -> dict[str, object]:
         from hf2li_tools import device_status
 
         return device_status(self.session, self.device, self.device_id)
 
+    @serialized_io
     def read_demod(
         self,
         count: int = 1,
@@ -57,6 +61,7 @@ class ZurichHF2LIAdapter:
             "auxin1_v": sample.auxin1,
         }
 
+    @serialized_io
     def set_output(
         self,
         amplitude: float | None = None,
@@ -66,6 +71,9 @@ class ZurichHF2LIAdapter:
         amplitude_index: int = 6,
     ) -> None:
         from hf2li_tools import set_output
+
+        if self.fm_readonly:
+            raise RuntimeError("FM-AFM profile: excitation is configured only in LabOne")
 
         set_output(
             self.session,
@@ -78,6 +86,7 @@ class ZurichHF2LIAdapter:
             amplitude_index=amplitude_index,
         )
 
+    @serialized_io
     def configure_demod(
         self,
         *,
@@ -90,6 +99,9 @@ class ZurichHF2LIAdapter:
         enable: bool = True,
     ) -> None:
         from hf2li_tools import configure_demod
+
+        if self.fm_readonly:
+            raise RuntimeError("FM-AFM profile: demodulators/PLL are configured only in LabOne")
 
         configure_demod(
             self.device,
@@ -126,13 +138,15 @@ class ZurichHF2LIAdapter:
             "device": self.connection.get("device", self.device_id),
             "interface": self.connection.get("interface", "USB"),
             "channels": self.channels,
+            "fm_afm": self.fm_settings,
         }
 
+    @serialized_io
     def close(self) -> None:
         disconnect = getattr(self.session, "disconnect_device", None)
         if callable(disconnect):
             try:
-                disconnect(self.device)
+                disconnect(self.device_id.lower())
             except Exception:
                 pass
 

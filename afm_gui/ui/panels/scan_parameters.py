@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QGroupBox, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QGroupBox, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 
 def build_scan_parameters_panel(window) -> QGroupBox:
@@ -42,5 +42,10 @@ def build_scan_parameters_panel(window) -> QGroupBox:
     form.addRow("Settle", window.t_settle)
     form.addRow("Rest", window.t_rest)
     form.addRow("Estimated Time", window.scan_time_label)
-    form.addRow("Channels", window.channel_widget)
+    channel_scroll = QScrollArea()
+    channel_scroll.setWidgetResizable(True)
+    channel_scroll.setWidget(window.channel_widget)
+    channel_scroll.setMinimumHeight(100)
+    channel_scroll.setMaximumHeight(190)
+    form.addRow("Channels", channel_scroll)
     return box

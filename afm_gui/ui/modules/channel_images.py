@@ -89,6 +89,16 @@ class ChannelImagesModule(QObject):
         if refresh_all:
             self.refresh_image_views()
 
+    def sync_scan_channels(self, channels: object) -> None:
+        """Keep image and line selectors aligned with scan checkboxes."""
+
+        names = [str(channel) for channel in channels]
+        if not names:
+            names = list(self.current_mode.default_channels[:1])
+        self.sync_channel_selectors(names)
+        self.refresh_image_views()
+        self.refresh_line_channel()
+
     def show_line(self, line_index: int, data: object) -> None:
         self.latest_lines = {}
         changed_pairs: set[tuple[str, str]] = set()
@@ -165,22 +175,24 @@ class ChannelImagesModule(QObject):
         if not isinstance(image_item, pg.ImageItem):
             return
         xc, yc, width, height = self._geometry_provider()
-        arr = np.nan_to_num(image, nan=0.0)
+        raw = np.asarray(image, dtype=float)
+        levels = self._levels_for_view(view, raw)
+        arr = np.nan_to_num(raw, nan=levels[0], posinf=levels[1], neginf=levels[0])
         image_item.setRect(QRectF(xc - width / 2.0, yc - height / 2.0, width, height))
-        levels = self._levels_for_view(view, arr)
-        image_item.setImage(arr.T, autoLevels=levels is None, levels=levels)
+        image_item.setImage(arr.T, autoLevels=False, levels=levels)
         histogram = view.get("histogram")
-        if isinstance(histogram, pg.HistogramLUTWidget) and levels is not None:
+        if isinstance(histogram, pg.HistogramLUTWidget):
             histogram.item.setLevels(*levels)
 
-    def _levels_for_view(self, view: dict[str, object], image: np.ndarray) -> tuple[float, float] | None:
+    def _levels_for_view(self, view: dict[str, object], image: np.ndarray) -> tuple[float, float]:
         auto = view.get("range_auto")
         auto_enabled = not isinstance(auto, QCheckBox) or auto.isChecked()
         if auto_enabled:
             levels = self._finite_min_max(image)
-            if levels is not None:
-                self._show_auto_levels(view, levels)
-            return None
+            if levels is None:
+                levels = (0.0, 1.0)
+            self._show_auto_levels(view, levels)
+            return levels
         minimum = self._spin_value(view.get("range_min"), 0.0)
         maximum = self._spin_value(view.get("range_max"), 1.0)
         if maximum <= minimum:
