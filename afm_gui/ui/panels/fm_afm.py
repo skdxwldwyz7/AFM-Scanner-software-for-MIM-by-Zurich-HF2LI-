@@ -16,7 +16,7 @@ def build_fm_afm_panel(module) -> QWidget:
     layout = QVBoxLayout(widget)
     description = QLabel(
         "HF2LI → AUX1: X / AUX2: Y / AUX3: Z PID / AUX4: PLL Δf\n"
-        "PLL/PID/excitation are configured in LabOne. GUI writes AUX1/2 only."
+        "Monitor records AUX1–AUX4 only. PLL/PID are configured in LabOne."
     )
     description.setWordWrap(True)
     layout.addWidget(description)
@@ -74,7 +74,7 @@ def build_fm_afm_panel(module) -> QWidget:
     plot_widget = QWidget()
     plots = QVBoxLayout(plot_widget)
     module.time_views = []
-    for default in ("auxout3", "auxout4", "pid_error"):
+    for default in ("auxout1", "auxout2", "auxout3", "auxout4"):
         selector = QComboBox()
         for channel in FM_CHANNELS:
             selector.addItem(f"{channel.label} [{channel.unit}]", channel.key)

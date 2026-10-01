@@ -29,21 +29,22 @@ reports.
 
 The active bundled scan mode is `fm_afm` / `FM-AFM / HF2 AUX XY` and expects a
 connected Zurich HF2LI assigned to both `scan_scanner` and lock-in readout.
-LabOne remains responsible for PLL/PID setup; the GUI reads those settings but
-does not configure them.
+LabOne remains solely responsible for PLL/PID setup and protection; the GUI
+does not configure or read PLL/PID nodes during this minimal scan mode.
 
 | HF2 output | Application role | Program behavior |
 | --- | --- | --- |
-| AUX1 | X scanner voltage | XY scan writes Offset; also reads value/routing |
-| AUX2 | Y scanner voltage | XY scan writes Offset; also reads value/routing |
-| AUX3 | Z PID output | Read-only; monitored against configured Z limits |
-| AUX4 | PLL frequency-shift output | Read-only; can be recorded as an image channel |
+| AUX1 | X scanner voltage | XY scan writes Offset; value is recorded |
+| AUX2 | Y scanner voltage | XY scan writes Offset; value is recorded |
+| AUX3 | Z PID output | Value is recorded; no software threshold check |
+| AUX4 | PLL frequency-shift output | Value is recorded |
 
 Only AUX1/2 are writable by FM scan motion. AUX3/PID and AUX4/PLL remain under
-LabOne control. The default room-temperature AUX3 monitor maximum is 5 V. A PLL
-unlock, PLL/PID disabled state, invalid route, failed required read, or AUX3
-limit violation terminates XY scanning; the GUI does not disable the PID or
-retract the probe. This software interlock is not a hardware safety system.
+LabOne control. FM scanning and monitoring read only the four AUX output-value
+nodes. There is no software check for PLL lock, PID state/routing, AUX routing,
+PID saturation, or AUX3/Z voltage limits. A missing selected AUX value still
+fails the scan, and local XY geometry/voltage limits remain. External hardware
+protection and correct LabOne configuration are therefore mandatory.
 
 ## Scan And Data Contract
 
@@ -70,11 +71,10 @@ metadata includes:
 - scan mode, direction, initial/current geometry and timing, selected channels,
   units, passes, calibration, runtime parameter updates, and image display
   selections;
-- HF2 device identity/connection context, configured PLL/PID indices, FM
-  software limits, and the final read-only LabOne snapshot;
-- PLL and PID node paths/values, selected oscillator and its frequency, AUX1-4
-  values and routes, available scalar nodes from the PLL/PID/AUX groups, and
-  per-node or group read failures;
+- HF2 device identity/connection context, XY software limits, and the final
+  AUX1-AUX4 output-value snapshot;
+- AUX1-AUX4 values and any corresponding read failures; PLL/PID parameters and
+  routes are intentionally absent in this speed-prioritized mode;
 - report output path and the associated application metadata.
 
 After the scan motion loop ends, report capture runs in the scan worker before
@@ -89,6 +89,33 @@ rather than replaced with assumed values.
 
 Append a new dated entry after every change. Do not rewrite older entries; add a
 correction entry if an earlier record was inaccurate.
+
+### 2026-10-01 - Remove PLL/PID safety reads and keep AUX-only imaging
+
+- Restricted FM imaging and Monitor channels to AUX1, AUX2, AUX3, and AUX4.
+- Replaced per-channel/whole-group reads with one LabOne wildcard request for
+  `auxouts/*/value` per sample, with individual AUX reads only as a compatibility
+  fallback when the wildcard response is unavailable or incomplete.
+- Removed all PLL/PID reads from scan preflight, per-pixel acquisition, XY
+  route rechecks, Monitor, and completed-scan reports.
+- Removed PLL lock/PID state, PID routing/saturation, AUX route, and AUX3/Z
+  threshold protections. Kept local finite-value checks, XY range limits,
+  geometry validation, motion rate limiting, and AUX1/AUX2-only writes.
+- Removed unused PLL/PID index and Z threshold fields from the active device
+  profile. LabOne and external hardware now carry all feedback-loop protection.
+- Files changed: `afm_gui/config/devices.yaml`,
+  `afm_gui/config/scan_modes.yaml`, `afm_gui/core/fm_afm.py`,
+  `afm_gui/device/adapters/hf2_fm.py`, `afm_gui/ui/modules/fm_afm.py`,
+  `afm_gui/ui/panels/fm_afm.py`, `tools/fm_scan_timing.py`,
+  `afm_gui/docs/fm_afm_usage.md`,
+  `afm_gui/docs/HF2LI_FM_AFM_进针与_mim-gui_扫描_SOP.md`,
+  `tests/test_fm_afm.py`, and `spec.md`.
+- Verification: `compileall`, YAML loading, `git diff --check`, and an offline
+  fake-DAQ test passed. The fake test confirmed one AUX wildcard read, no
+  PLL/PID or individual-node reads, and one batched AUX1/AUX2 write. Full pytest
+  collection is unavailable in the local base environment because PyQt6 is not
+  installed. Real HF2LI timing and wildcard response shape must be verified on
+  the remote PC.
 
 ### 2026-09-29 - Reduce per-pixel HF2 snapshot reads
 

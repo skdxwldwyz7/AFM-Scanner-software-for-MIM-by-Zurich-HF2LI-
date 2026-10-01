@@ -36,7 +36,6 @@ class CallStats:
     def __init__(self) -> None:
         self.samples: dict[str, list[float]] = defaultdict(list)
         self.labels: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-        self.batch_shapes: dict[str, set[int]] = defaultdict(set)
 
     def add(self, name: str, elapsed: float, label: str = "") -> None:
         self.samples[name].append(elapsed)
@@ -76,7 +75,7 @@ def install_timers(adapter: object, stats: CallStats) -> None:
     methods = (
         "read_fm_snapshot",
         "read_demod",
-        "_read_batch_group",
+        "_read_aux_outputs",
         "_get",
         "read_xy",
         "set_xy_voltage",
@@ -89,11 +88,9 @@ def install_timers(adapter: object, stats: CallStats) -> None:
 
         def timed(*args: Any, _original=original, _name=name, **kwargs: Any) -> Any:
             label = ""
-            if _name in {"_read_batch_group", "_get"} and args:
+            if _name == "_get" and args:
                 label = str(args[0])
             result = stats.timed(_name, _original, *args, label=label, **kwargs)
-            if _name == "_read_batch_group" and isinstance(result, dict):
-                stats.batch_shapes[label].add(len(result))
             return result
 
         setattr(adapter, name, timed)
@@ -105,9 +102,6 @@ def parse_channels(raw: str) -> tuple[str, ...]:
         "aux2": "auxout2",
         "aux3": "auxout3",
         "aux4": "auxout4",
-        "pll": "pll_df",
-        "df": "pll_df",
-        "pid": "pid_error",
     }
     result: list[str] = []
     for item in raw.split(","):
@@ -272,10 +266,6 @@ def main() -> int:
             if scan_started:
                 adapter.end_fm_scan()
         stats.print_table("timed adapter calls")
-        if stats.batch_shapes:
-            print("\n[LabOne wildcard batch payloads]")
-            for group, sizes in sorted(stats.batch_shapes.items()):
-                print(f"{group:24s} calls={len(stats.labels['_read_batch_group'][group]):5d} returned_node_counts={sorted(sizes)}")
         print("\n[phase totals]")
         for name in ("preflight", "selected_snapshot", "full_snapshot", "acquisition", "scan_total"):
             print(f"{name:24s} count={stats.count(name):5d} total={stats.total(name):.4f}s")

@@ -127,14 +127,8 @@ class FMAFMModule(QObject):
             cell = self.readings.item(row, 1)
             cell.setText(text)
             cell.setToolTip(errors.get(channel.key, ""))
-        warnings = []
-        if values.get("pll_locked") == 0:
-            warnings.append("PLL UNLOCKED")
-        if values.get("pid_at_limit") == 1:
-            warnings.append("PID AT LIMIT")
-        if errors:
-            warnings.append(f"{len(errors)} unavailable values (hover N/A)")
-        self.monitor_status.setText(timestamp + (" | " + "; ".join(warnings) if warnings else " | Live"))
+        status = f"{len(errors)} unavailable AUX values (hover N/A)" if errors else "Live"
+        self.monitor_status.setText(timestamp + " | " + status)
         self.refresh_plots()
 
     def refresh_plots(self, *_args):
@@ -210,9 +204,8 @@ class FMAFMModule(QObject):
             "latest": {key: value if math.isfinite(value) else None for key, value in self.latest.items()},
             "monitor_interval_ms": self.monitor_interval.value(),
             "history_limit": self.HISTORY_LIMIT,
-            "xy_units": "HF2 AUX output V (before external amplifier)",
-            "z_units": "HF2 AUX3 V, not calibrated height",
-            "labone_owns": ["PLL", "PID", "excitation", "AUX3", "AUX4"],
+            "aux_units": "HF2 AUX output V (before external amplifier)",
+            "labone_owns": ["PLL", "PID", "excitation"],
         }
 
     def export_history(self):

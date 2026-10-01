@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import math
 import threading
-import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import wraps
@@ -24,35 +23,15 @@ def serialized_io(method):
 
 
 class HF2FMInterface:
-    SCAN_ROUTE_RECHECK_S = 0.25
-
     def _init_fm(self) -> None:
         self.io_lock = threading.RLock()
         self.fm_settings = dict(self.connection.get("fm_afm") or {})
         self.fm_readonly = bool(self.fm_settings.get("enabled", False))
         self.fm_errors: dict[str, str] = {}
-        self.pll_index = int(self.fm_settings.get("pll_index", 0))
-        self.pid_index = int(self.fm_settings.get("pid_index", 0))
         self.xy_min_v = float(self.fm_settings.get("xy_min_v", 0.0))
         self.xy_max_v = float(self.fm_settings.get("xy_max_v", 5.0))
         self.xy_step_v = float(self.fm_settings.get("max_step_v", 0.01))
         self._fm_scan_active = False
-        self._last_scan_route_check = 0.0
-        self._pll_oscillator_index: int | None = None
-        self._unsupported_batch_read_groups: set[str] = set()
-        self._fm_scan_static_nodes = {
-            f"plls/{self.pll_index}/{name}"
-            for name in ("freqcenter", "freqrange", "setpoint", "demodselect", "oscselect")
-        }
-        self._fm_scan_static_nodes.update(
-            f"pids/{self.pid_index}/{name}"
-            for name in ("setpoint", "center", "range", "input", "inputchannel", "output", "outputchannel")
-        )
-        for index in range(4):
-            self._fm_scan_static_nodes.update(
-                f"auxouts/{index}/{name}" for name in ("scale", "offset", "outputselect")
-            )
-        self._fm_scan_static_cache: dict[str, float] = {}
         if not (-10 <= self.xy_min_v < self.xy_max_v <= 10):
             raise ValueError("XY software limits must lie within -10...10 V")
         if not math.isfinite(self.xy_step_v) or self.xy_step_v <= 0:
@@ -65,99 +44,10 @@ class HF2FMInterface:
         reader = self.session.daq_server.getInt if integer else self.session.daq_server.getDouble
         return float(reader(self._path(suffix)))
 
-    def _get_scan_node(self, suffix: str, *, integer: bool = False) -> float:
-        if self._fm_scan_active and suffix in self._fm_scan_static_nodes:
-            if suffix not in self._fm_scan_static_cache:
-                self._fm_scan_static_cache[suffix] = self._get(suffix, integer=integer)
-            return self._fm_scan_static_cache[suffix]
-        return self._get(suffix, integer=integer)
-
-    def _fm_nodes(self) -> dict[str, tuple[str, bool]]:
-        pll, pid = f"plls/{self.pll_index}", f"pids/{self.pid_index}"
-        result = {
-            "pll_df": (f"{pll}/freqdelta", False),
-            "pll_error": (f"{pll}/error", False),
-            "pll_locked": (f"{pll}/locked", True),
-            "pll_enabled": (f"{pll}/enable", True),
-            "pll_center": (f"{pll}/freqcenter", False),
-            "pll_range": (f"{pll}/freqrange", False),
-            "pll_setpoint": (f"{pll}/setpoint", False),
-            "pll_demodselect": (f"{pll}/demodselect", True),
-            "pll_oscselect": (f"{pll}/oscselect", True),
-            "auxin1": ("auxins/0/values/0", False),
-            "auxin2": ("auxins/0/values/1", False),
-            "pid_error": (f"{pid}/error", False),
-            "pid_shift": (f"{pid}/shift", False),
-            "pid_enabled": (f"{pid}/enable", True),
-            "pid_setpoint": (f"{pid}/setpoint", False),
-            "pid_center": (f"{pid}/center", False),
-            "pid_range": (f"{pid}/range", False),
-            "pid_input": (f"{pid}/input", True),
-            "pid_inputchannel": (f"{pid}/inputchannel", True),
-            "pid_output": (f"{pid}/output", True),
-            "pid_outputchannel": (f"{pid}/outputchannel", True),
-        }
-        for index in range(4):
-            output = f"auxouts/{index}"
-            result.update(
-                {
-                    f"auxout{index + 1}": (f"{output}/value", False),
-                    f"auxout{index + 1}_scale": (f"{output}/scale", False),
-                    f"auxout{index + 1}_offset": (f"{output}/offset", False),
-                    f"auxout{index + 1}_outputselect": (f"{output}/outputselect", True),
-                }
-            )
-        result["aux4_scale"] = result["auxout4_scale"]
-        result["aux4_offset"] = result["auxout4_offset"]
-        return result
-
     def read_fm_report_snapshot(self) -> dict[str, object]:
-        """Read a detailed, read-only snapshot for a completed FM-AFM scan."""
-        groups = (f"plls/{self.pll_index}", f"pids/{self.pid_index}", "auxouts", "auxins/0")
-        nodes: dict[str, float] = {}
-        errors: dict[str, str] = {}
-        daq = self.session.daq_server
-        getter = getattr(daq, "get", None)
-        with self.io_lock:
-            if callable(getter):
-                for group in groups:
-                    wildcard = self._path(f"{group}/*")
-                    try:
-                        try:
-                            response = getter(wildcard, flat=True)
-                        except TypeError:
-                            response = getter(wildcard)
-                        prefix = self._path("").lower().rstrip("/") + "/"
-                        for node_path, raw_value in _flatten_batch_response(response).items():
-                            normalized = node_path.lower()
-                            if normalized.startswith(prefix):
-                                normalized = normalized[len(prefix):]
-                            value = _batch_scalar(raw_value)
-                            if value is None:
-                                continue
-                            try:
-                                nodes[normalized] = float(value)
-                            except (TypeError, ValueError, OverflowError):
-                                continue
-                    except Exception as exc:
-                        errors[wildcard] = str(exc)
-
-            for suffix, integer in sorted(set(self._fm_nodes().values())):
-                if suffix in nodes:
-                    continue
-                try:
-                    nodes[suffix] = self._get(suffix, integer=integer)
-                except Exception as exc:
-                    errors[self._path(suffix)] = str(exc)
-
-            oscillator_node = f"plls/{self.pll_index}/oscselect"
-            oscillator = nodes.get(oscillator_node)
-            if oscillator is not None and math.isfinite(oscillator):
-                frequency_node = f"oscs/{int(oscillator)}/freq"
-                try:
-                    nodes[frequency_node] = self._get(frequency_node)
-                except Exception as exc:
-                    errors[self._path(frequency_node)] = str(exc)
+        """Read only AUX1-AUX4 values for the completed-scan report."""
+        values = self.read_fm_snapshot()
+        nodes = {f"auxouts/{index}/value": values[f"auxout{index + 1}"] for index in range(4)}
 
         connection = self.connection
         return {
@@ -166,138 +56,62 @@ class HF2FMInterface:
             "host": connection.get("host", ""),
             "port": connection.get("port", ""),
             "interface": connection.get("interface", ""),
-            "pll_index": self.pll_index,
-            "pid_index": self.pid_index,
             "fm_settings": dict(self.fm_settings),
             "software_limits": {
                 "xy_min_v": self.xy_min_v,
                 "xy_max_v": self.xy_max_v,
                 "max_step_v": self.xy_step_v,
-                "z_min_v": float(self.fm_settings.get("z_min_v", 0.0)),
-                "z_max_v": float(self.fm_settings.get("z_max_v", 5.0)),
             },
             "nodes": nodes,
-            "read_errors": errors,
+            "read_errors": dict(self.fm_errors),
         }
 
     def read_fm_snapshot(self, channels=None) -> dict[str, float]:
         requested = set(FM_CHANNEL_BY_KEY if channels is None else channels)
-        wanted = set(requested)
-        if "pid_out" in wanted:
-            wanted.update(("pid_center", "pid_shift"))
-        if "pid_at_limit" in wanted:
-            wanted.update(("pid_shift", "pid_range"))
-        if "loopback_error" in wanted:
-            wanted.update(("auxin1", "auxout4"))
-        values = {key: math.nan for key in wanted}
-        errors = {}
+        unknown = requested - set(FM_CHANNEL_BY_KEY)
+        if unknown:
+            raise ValueError("Unsupported FM channel(s): " + ", ".join(sorted(unknown)))
         with self.io_lock:
-            node_values, node_errors = self._read_fm_nodes(wanted)
-            values.update(node_values)
-            errors.update(node_errors)
-            if wanted & {"x", "y", "r", "theta", "frequency"}:
-                try:
-                    # Follow the demodulator actually selected by PLL in LabOne.
-                    index = int(self._get_scan_node(f"plls/{self.pll_index}/demodselect", integer=True))
-                    sample = self.read_demod(demod_index=index)
-                    for key, source in {"x": "x_v", "y": "y_v", "r": "r_v", "theta": "phase_deg"}.items():
-                        if key in wanted:
-                            values[key] = float(sample[source])
-                except Exception as exc:
-                    for key in wanted & {"x", "y", "r", "theta"}:
-                        errors[key] = str(exc)
-                if "frequency" in wanted:
-                    try:
-                        oscillator = self._pll_oscillator_index if self._fm_scan_active else None
-                        if oscillator is None:
-                            oscillator = int(self._get(f"plls/{self.pll_index}/oscselect", integer=True))
-                        values["frequency"] = self._get(f"oscs/{oscillator}/freq")
-                    except Exception as exc:
-                        errors["frequency"] = str(exc)
-            if "pid_out" in wanted:
-                values["pid_out"] = values["pid_center"] + values["pid_shift"]
-            if "pid_at_limit" in wanted:
-                shift, limit = values["pid_shift"], values["pid_range"]
-                if math.isfinite(shift) and math.isfinite(limit) and limit > 0:
-                    values["pid_at_limit"] = float(abs(shift) >= limit * 0.99)
-            if "loopback_error" in wanted:
-                values["loopback_error"] = values["auxin1"] - values["auxout4"]
+            values, errors = self._read_aux_outputs()
             self.fm_errors = errors
         return {key: values.get(key, math.nan) for key in requested}
 
-    def _read_fm_nodes(self, wanted: set[str]) -> tuple[dict[str, float], dict[str, str]]:
-        definitions = self._fm_nodes()
-        grouped: dict[str, list[tuple[str, str, bool]]] = {}
-        for key in wanted:
-            if key not in definitions:
-                continue
-            node, integer = definitions[key]
-            parts = node.split("/")
-            group = "auxouts" if parts[0] == "auxouts" else "/".join(parts[:2])
-            grouped.setdefault(group, []).append((key, node, integer))
-
+    def _read_aux_outputs(self) -> tuple[dict[str, float], dict[str, str]]:
         values: dict[str, float] = {}
         errors: dict[str, str] = {}
-        if self._fm_scan_active:
-            for key, node, integer in (entry for entries in grouped.values() for entry in entries):
-                try:
-                    values[key] = self._get_scan_node(node, integer=integer)
-                except Exception as exc:
-                    errors[key] = str(exc)
-            return values, errors
-
-        for group, entries in grouped.items():
-            batch_values = self._read_batch_group(group) if group not in self._unsupported_batch_read_groups else None
-            if batch_values is not None and not any(node in batch_values for _key, node, _integer in entries):
-                self._unsupported_batch_read_groups.add(group)
-                batch_values = None
-            for key, node, integer in entries:
-                if batch_values is not None and node in batch_values:
-                    values[key] = batch_values[node]
-                    continue
-                try:
-                    values[key] = self._get(node, integer=integer)
-                except Exception as exc:
-                    errors[key] = str(exc)
-        return values, errors
-
-    def _read_batch_group(self, group: str) -> dict[str, float] | None:
-        if group in self._unsupported_batch_read_groups:
-            return None
         daq = self.session.daq_server
         getter = getattr(daq, "get", None)
-        if not callable(getter):
-            self._unsupported_batch_read_groups.add(group)
-            return None
-        path = self._path(f"{group}/*")
-        try:
+        if callable(getter):
+            path = self._path("auxouts/*/value")
             try:
-                response = getter(path, flat=True)
-            except TypeError:
-                response = getter(path)
-        except Exception:
-            self._unsupported_batch_read_groups.add(group)
-            return None
+                try:
+                    response = getter(path, flat=True)
+                except TypeError:
+                    response = getter(path)
+                flattened = _flatten_batch_response(response)
+                prefix = self._path("").lower().rstrip("/") + "/"
+                for node_path, raw_value in flattened.items():
+                    normalized = node_path.lower()
+                    if normalized.startswith(prefix):
+                        normalized = normalized[len(prefix):]
+                    for index in range(4):
+                        if normalized != f"auxouts/{index}/value":
+                            continue
+                        value = _batch_scalar(raw_value)
+                        if value is not None:
+                            values[f"auxout{index + 1}"] = float(value)
+            except Exception as exc:
+                errors["auxouts/*/value"] = str(exc)
 
-        flattened = _flatten_batch_response(response)
-        prefix = self._path("").lower().rstrip("/") + "/"
-        result: dict[str, float] = {}
-        for node_path, raw_value in flattened.items():
-            normalized = node_path.lower()
-            if normalized.startswith(prefix):
-                normalized = normalized[len(prefix):]
-            value = _batch_scalar(raw_value)
-            if value is None:
+        for index in range(4):
+            key = f"auxout{index + 1}"
+            if key in values:
                 continue
             try:
-                result[normalized] = float(value)
-            except (TypeError, ValueError, OverflowError):
-                continue
-
-        if result:
-            return result
-        self._unsupported_batch_read_groups.add(group)
-        return None
+                values[key] = self._get(f"auxouts/{index}/value")
+            except Exception as exc:
+                errors[key] = str(exc)
+        return values, errors
 
     def validate_xy(self, x: float, y: float) -> None:
         for axis, value in (("X", x), ("Y", y)):
@@ -307,22 +121,6 @@ class HF2FMInterface:
     def validate_xy_control(self) -> None:
         if not self.fm_readonly:
             raise RuntimeError("Enable the FM-AFM connection profile before AUX XY control")
-        with self.io_lock:
-            for index in (0, 1):
-                if self._get(f"auxouts/{index}/outputselect", integer=True) != -1:
-                    raise RuntimeError(f"Set AUX{index + 1} Signal to Manual in LabOne before moving XY")
-            # Verify no active PID owns either XY offset. No settings are changed.
-            # ziListEnum: recursive | absolute | leavesonly. Absolute paths are
-            # needed for subsequent getInt calls (flag 0 returns relative names).
-            paths = self.session.daq_server.listNodes(self._path("pids/*/enable"), 7)
-            if not paths:
-                raise RuntimeError("Cannot verify PID ownership of AUX1/2")
-            for path in paths:
-                base = str(path).lower().rsplit("/", 1)[0]
-                daq = self.session.daq_server
-                if daq.getInt(base + "/enable") and daq.getInt(base + "/output") == 3:
-                    if daq.getInt(base + "/outputchannel") in (0, 1):
-                        raise RuntimeError("An active PID owns AUX1/2; XY motion is blocked")
 
     def read_xy(self) -> tuple[float, float]:
         with self.io_lock:
@@ -331,11 +129,6 @@ class HF2FMInterface:
     def set_xy_voltage(self, x: float, y: float) -> None:
         self.validate_xy(x, y)
         with self.io_lock:
-            now = time.monotonic()
-            if not self._fm_scan_active or now - self._last_scan_route_check >= self.SCAN_ROUTE_RECHECK_S:
-                self.validate_xy_control()
-                if self._fm_scan_active:
-                    self._last_scan_route_check = now
             daq = self.session.daq_server
             updates = [
                 [self._path("auxouts/0/offset"), float(x)],
@@ -371,47 +164,15 @@ class HF2FMInterface:
 
     def validate_fm_scan(self, config, lines) -> None:
         self.validate_fm_geometry(config, lines)
-        self.validate_xy_control()
-        with self.io_lock:
-            pid = f"pids/{self.pid_index}"
-            expected = {"input": 4, "inputchannel": 0, "output": 3, "outputchannel": 2}
-            for suffix, value in expected.items():
-                if self._get(f"{pid}/{suffix}", integer=True) != value:
-                    raise RuntimeError("LabOne PID must route Aux In 1 to Aux Out 3 offset")
-            if self.pll_index != 0 or self._get("auxouts/3/outputselect", integer=True) != 4:
-                raise RuntimeError("This FM wiring requires AUX4 source PLL 1 frequency shift")
-            self._pll_oscillator_index = int(self._get(f"plls/{self.pll_index}/oscselect", integer=True))
-            if self._get("auxouts/2/outputselect", integer=True) != -1 or self._get("auxouts/2/scale") != 0:
-                raise RuntimeError("LabOne AUX3 must use Manual, Scale=0 for the configured Z loop")
-            center, limit = self._get(f"{pid}/center"), self._get(f"{pid}/range")
-            if not math.isfinite(limit) or limit <= 0:
-                raise RuntimeError("Z PID output range must be positive")
-            self.check_z_voltage(center - limit)
-            self.check_z_voltage(center + limit)
-        values = self.read_fm_snapshot(("pll_enabled", "pll_locked", "pid_enabled", "auxout3"))
-        if any(values[key] != 1 for key in ("pll_enabled", "pll_locked", "pid_enabled")):
-            raise RuntimeError("FM scan requires PLL enabled/locked and Z PID enabled in LabOne")
-        self.check_z_voltage(values["auxout3"])
 
     def begin_fm_scan(self, config, lines) -> None:
-        with self.io_lock:
-            self._fm_scan_static_cache.clear()
         self.validate_fm_scan(config, lines)
         with self.io_lock:
-            self._last_scan_route_check = time.monotonic()
             self._fm_scan_active = True
 
     def end_fm_scan(self) -> None:
         with self.io_lock:
             self._fm_scan_active = False
-            self._last_scan_route_check = 0.0
-            self._fm_scan_static_cache.clear()
-
-    def check_z_voltage(self, voltage: float) -> None:
-        lower = float(self.fm_settings.get("z_min_v", 0.0))
-        upper = float(self.fm_settings.get("z_max_v", 5.0))
-        if not math.isfinite(voltage) or not lower <= voltage <= upper:
-            raise RuntimeError("AUX3 outside configured Z monitor limits; XY stopped, Z remains under LabOne control")
 
     def stop(self) -> None:
         """Stop means stop software motion; hold all four outputs unchanged."""

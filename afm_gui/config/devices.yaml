@@ -92,13 +92,9 @@ devices:
         amplitude_index: 7
     fm_afm:
       enabled: true
-      pll_index: 0
-      pid_index: 0
       xy_min_v: 0.0
       xy_max_v: 5.0
       max_step_v: 0.01
-      z_min_v: 0.0
-      z_max_v: 5.0
 - name: srs_sr830
   label: SRS SR830 Lock-in
   kind: lockin

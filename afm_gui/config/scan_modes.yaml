@@ -6,6 +6,14 @@ modes:
     label: FM-AFM / HF2 AUX XY
     default_display_count: 4
     channels:
+      - name: auxout1
+        label: Aux Out 1 / X
+        unit: V
+        enabled: true
+      - name: auxout2
+        label: Aux Out 2 / Y
+        unit: V
+        enabled: true
       - name: auxout3
         label: Aux Out 3 / Z PID output
         unit: V
@@ -14,114 +22,6 @@ modes:
         label: Aux Out 4 / PLL Δf output
         unit: V
         enabled: true
-      - name: pll_df
-        label: PLL frequency shift
-        unit: Hz
-        enabled: true
-      - name: r
-        label: Demod amplitude R
-        unit: V
-        enabled: false
-      - name: pid_error
-        label: Z PID error
-        unit: V
-        enabled: true
-      - name: frequency
-        label: Tracked frequency
-        unit: Hz
-        enabled: true
-      - name: pll_error
-        label: PLL phase error
-        unit: deg
-        enabled: false
-      - name: pll_locked
-        label: PLL locked
-        unit: ''
-        enabled: false
-      - name: pll_enabled
-        label: PLL enabled
-        unit: ''
-        enabled: false
-      - name: pll_center
-        label: PLL center frequency
-        unit: Hz
-        enabled: false
-      - name: pll_range
-        label: PLL frequency range
-        unit: Hz
-        enabled: false
-      - name: pll_setpoint
-        label: PLL phase setpoint
-        unit: deg
-        enabled: false
-      - name: x
-        label: Demod X
-        unit: V
-        enabled: false
-      - name: y
-        label: Demod Y
-        unit: V
-        enabled: false
-      - name: theta
-        label: Demod phase
-        unit: deg
-        enabled: false
-      - name: auxin1
-        label: Aux In 1 / df voltage
-        unit: V
-        enabled: false
-      - name: auxin2
-        label: Aux In 2
-        unit: V
-        enabled: false
-      - name: pid_shift
-        label: Z PID shift
-        unit: V
-        enabled: false
-      - name: pid_out
-        label: Z PID center + shift (derived)
-        unit: V
-        enabled: false
-      - name: pid_enabled
-        label: Z PID enabled
-        unit: ''
-        enabled: false
-      - name: pid_setpoint
-        label: Z PID setpoint
-        unit: V
-        enabled: false
-      - name: pid_center
-        label: Z PID center
-        unit: V
-        enabled: false
-      - name: pid_range
-        label: Z PID range
-        unit: V
-        enabled: false
-      - name: pid_at_limit
-        label: Z PID at limit (derived)
-        unit: ''
-        enabled: false
-      - name: auxout1
-        label: Aux Out 1 / X
-        unit: V
-        enabled: false
-      - name: auxout2
-        label: Aux Out 2 / Y
-        unit: V
-        enabled: false
-      - name: aux4_scale
-        label: Aux 4 scale
-        unit: V/Hz
-        enabled: false
-      - name: aux4_offset
-        label: Aux 4 offset
-        unit: V
-        enabled: false
-      - name: loopback_error
-        label: Aux In 1 - Aux Out 4 (derived)
-        unit: V
-        enabled: false
 
   topo:
     enabled: false

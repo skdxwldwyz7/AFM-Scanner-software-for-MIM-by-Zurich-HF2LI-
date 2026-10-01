@@ -74,7 +74,13 @@ class FakeDAQ:
 
     def get(self, path, flat=True):
         self.batch_reads.append((path, flat))
-        group = path.lower().split("/", 2)[2].removesuffix("/*")
+        suffix = path.lower().split("/", 2)[2]
+        if suffix == "auxouts/*/value":
+            return {
+                f"/dev18388/auxouts/{index}/value": {"value": [self.values[f"auxouts/{index}/value"]]}
+                for index in range(4)
+            }
+        group = suffix.removesuffix("/*")
         return {
             f"/dev18388/{node}": {"value": [value]}
             for node, value in self.values.items()
@@ -123,66 +129,52 @@ class FMAFMAdapterTests(unittest.TestCase):
     def config(self):
         return ScanConfig(xc=2.5, yc=2.5, width=0.01, height=0.01, pixels=3, lines=2,
                           linear=100, t_sample=0, t_settle=0, t_rest=0,
-                          scan_mode="fm_afm", channels=("auxout3", "pll_df"),
+                          scan_mode="fm_afm", channels=("auxout1", "auxout2", "auxout3", "auxout4"),
                           xy_unit="V", volts_per_nm_x=1, volts_per_nm_y=1)
 
     def test_snapshot_reads_real_nodes_and_never_writes(self):
         sample = self.adapter.read_fm_snapshot()
         self.assertEqual(set(sample), {c.key for c in FM_CHANNELS})
         self.assertTrue(all(math.isfinite(v) for v in sample.values()))
-        self.assertEqual(sample["frequency"], 32766.75)
-        self.assertEqual(sample["pll_df"], -1.25)
-        self.assertAlmostEqual(sample["pid_out"], 2.6)
-        self.assertEqual(sample["loopback_error"], 0)
-        self.assertEqual(self.adapter.demod_indices, [2])
-        self.assertGreater(len(self.adapter.daq.batch_reads), 0)
+        self.assertEqual(sample["auxout1"], 2.5)
+        self.assertEqual(sample["auxout2"], 2.5)
+        self.assertAlmostEqual(sample["auxout3"], 2.6)
+        self.assertEqual(sample["auxout4"], -0.125)
+        self.assertEqual(len(self.adapter.daq.batch_reads), 1)
+        self.assertIn("auxouts/*/value", self.adapter.daq.batch_reads[0][0])
         self.assertLess(len(self.adapter.daq.reads), 10)
         self.assertEqual(self.adapter.daq.writes, [])
 
-    def test_scan_snapshots_read_exact_nodes_and_cache_static_settings(self):
+    def test_scan_snapshots_use_one_aux_batch_and_no_feedback_nodes(self):
         config = self.config()
         lines = generate_scan_lines(config, ScanDirection.UP)
         self.adapter.begin_fm_scan(config, lines)
-        batch_count = len(self.adapter.daq.batch_reads)
         self.adapter.daq.reads.clear()
-        channels = (
-            "pll_locked", "pll_enabled", "pid_enabled", "auxout3", "auxout4",
-            "pll_center", "pid_center", "pid_error",
-        )
+        channels = ("auxout1", "auxout2", "auxout3", "auxout4")
 
         first = self.adapter.read_fm_snapshot(channels)
         second = self.adapter.read_fm_snapshot(channels)
 
         self.assertEqual(first, second)
-        self.assertEqual(len(self.adapter.daq.batch_reads), batch_count)
-        self.assertEqual(self.adapter.daq.reads.count("plls/0/locked"), 2)
-        self.assertEqual(self.adapter.daq.reads.count("plls/0/enable"), 2)
-        self.assertEqual(self.adapter.daq.reads.count("pids/0/enable"), 2)
-        self.assertEqual(self.adapter.daq.reads.count("auxouts/2/value"), 2)
-        self.assertEqual(self.adapter.daq.reads.count("auxouts/3/value"), 2)
-        self.assertEqual(self.adapter.daq.reads.count("pids/0/error"), 2)
-        self.assertEqual(self.adapter.daq.reads.count("plls/0/freqcenter"), 1)
-        self.assertEqual(self.adapter.daq.reads.count("pids/0/center"), 1)
+        self.assertEqual(len(self.adapter.daq.batch_reads), 2)
+        self.assertEqual(self.adapter.daq.reads, [])
+        self.assertFalse(any("/plls/" in path or "/pids/" in path for path, _flat in self.adapter.daq.batch_reads))
         self.adapter.end_fm_scan()
 
-    def test_report_snapshot_contains_detailed_pll_pid_and_aux_nodes_read_only(self):
+    def test_report_snapshot_contains_aux_nodes_only(self):
         report = self.adapter.read_fm_report_snapshot()
         nodes = report["nodes"]
         self.assertEqual(report["device_id"], "DEV18388")
-        self.assertEqual(nodes["plls/0/freqdelta"], -1.25)
-        self.assertEqual(nodes["plls/0/oscselect"], 1)
-        self.assertEqual(nodes["pids/0/input"], 4)
-        self.assertEqual(nodes["pids/0/outputchannel"], 2)
-        self.assertEqual(nodes["auxouts/2/outputselect"], -1)
-        self.assertEqual(nodes["auxouts/3/scale"], 0.1)
+        self.assertEqual(set(nodes), {f"auxouts/{index}/value" for index in range(4)})
+        self.assertEqual(nodes["auxouts/2/value"], 2.6)
         self.assertEqual(report["read_errors"], {})
         self.assertEqual(self.adapter.daq.writes, [])
 
     def test_missing_nodes_are_nan_and_scan_fails(self):
-        del self.adapter.daq.values["plls/0/freqdelta"]
-        self.assertTrue(math.isnan(self.adapter.read_fm_snapshot()["pll_df"]))
-        with self.assertRaisesRegex(RuntimeError, "pll_df"):
-            FMAcquisition(self.adapter)(("pll_df",))
+        del self.adapter.daq.values["auxouts/3/value"]
+        self.assertTrue(math.isnan(self.adapter.read_fm_snapshot()["auxout4"]))
+        with self.assertRaisesRegex(RuntimeError, "auxout4"):
+            FMAcquisition(self.adapter)(("auxout4",))
 
     def test_xy_only_write_allowlist_and_limits(self):
         self.adapter.set_xy_voltage(2.51, 2.49)
@@ -197,49 +189,40 @@ class FMAFMAdapterTests(unittest.TestCase):
         self.adapter.stop()
         self.assertEqual(self.adapter.daq.writes, [])
 
-    def test_scan_batches_xy_writes_and_rechecks_routes_at_bounded_interval(self):
+    def test_scan_batches_xy_writes_without_hardware_route_reads(self):
         config = self.config()
         lines = generate_scan_lines(config, ScanDirection.UP)
         self.adapter.begin_fm_scan(config, lines)
-        self.assertEqual(self.adapter.daq.list_node_calls, 1)
 
         self.adapter.set_xy_voltage(2.501, 2.502)
         self.adapter.set_xy_voltage(2.503, 2.504)
-        self.assertEqual(self.adapter.daq.list_node_calls, 1)
         self.assertEqual(len(self.adapter.daq.batch_calls), 2)
-
-        self.adapter.daq.values["auxouts/0/outputselect"] = 4
-        self.adapter._last_scan_route_check -= self.adapter.SCAN_ROUTE_RECHECK_S + 0.01
-        with self.assertRaisesRegex(RuntimeError, "Manual"):
-            self.adapter.set_xy_voltage(2.505, 2.506)
-        self.assertEqual(len(self.adapter.daq.batch_calls), 2)
+        self.assertEqual(self.adapter.daq.list_node_calls, 0)
+        self.assertFalse(any(path.startswith(("plls/", "pids/")) for path in self.adapter.daq.reads))
         self.adapter.end_fm_scan()
 
-    def test_manual_mode_and_pid_ownership_checked_before_writing(self):
+    def test_manual_move_does_not_read_pid_or_routes(self):
         self.adapter.daq.values["auxouts/0/outputselect"] = 4
-        with self.assertRaisesRegex(RuntimeError, "Manual"):
-            self.adapter.set_xy_voltage(2.5, 2.5)
-        self.adapter.daq.values["auxouts/0/outputselect"] = -1
         self.adapter.daq.values["pids/0/outputchannel"] = 0
-        with self.assertRaisesRegex(RuntimeError, "owns"):
-            self.adapter.set_xy_voltage(2.5, 2.5)
-        self.assertEqual(self.adapter.daq.writes, [])
+        self.adapter.set_xy_voltage(2.5, 2.5)
+        self.assertEqual(self.adapter.daq.list_node_calls, 0)
+        self.assertEqual({path for path, _value in self.adapter.daq.writes}, {"auxouts/0/offset", "auxouts/1/offset"})
 
-    def test_preflight_checks_rotated_extents_and_feedback(self):
+    def test_preflight_checks_geometry_without_feedback_reads(self):
         config = self.config()
         self.adapter.validate_fm_scan(config, generate_scan_lines(config, ScanDirection.UP))
         outside = replace(config, xc=4.99, width=0.1, height=0.1, angle=45)
         with self.assertRaises(ValueError):
             self.adapter.validate_fm_scan(outside, generate_scan_lines(outside, ScanDirection.UP))
-        self.adapter.daq.values["pids/0/range"] = 3
-        with self.assertRaisesRegex(RuntimeError, "Z monitor limits"):
-            self.adapter.validate_fm_scan(config, generate_scan_lines(config, ScanDirection.UP))
+        self.assertEqual(self.adapter.daq.reads, [])
+        self.assertEqual(self.adapter.daq.batch_reads, [])
         self.assertEqual(self.adapter.daq.writes, [])
 
-    def test_scan_stops_on_loss_of_lock_without_writing_z(self):
+    def test_scan_does_not_read_or_enforce_pll_lock(self):
         self.adapter.daq.values["plls/0/locked"] = 0
-        with self.assertRaisesRegex(RuntimeError, "PLL unlocked"):
-            FMAcquisition(self.adapter)(("auxout3",))
+        sample = FMAcquisition(self.adapter)(("auxout3",))
+        self.assertEqual(sample["auxout3"], 2.6)
+        self.assertFalse(any("plls/" in path or "pids/" in path for path in self.adapter.daq.reads))
         self.assertEqual(self.adapter.daq.writes, [])
 
     def test_real_adapter_blocks_legacy_writes_in_fm_profile(self):
@@ -258,7 +241,7 @@ class FMAFMAdapterTests(unittest.TestCase):
         self.assertEqual(disconnected, ["dev18388"])
         self.assertEqual(self.adapter.daq.writes, [])
 
-    def test_worker_preflight_failure_never_moves(self):
+    def test_worker_ignores_pid_route_and_runs(self):
         config = self.config()
         self.adapter.daq.values["pids/0/outputchannel"] = 0
         worker = _AdapterScanWorker(adapter=self.adapter, config=config,
@@ -268,10 +251,10 @@ class FMAFMAdapterTests(unittest.TestCase):
         failures = []
         worker.failed.connect(failures.append)
         worker.run()
-        self.assertTrue(failures)
-        self.assertEqual(worker.report_context["status"], "failed")
+        self.assertEqual(failures, [])
+        self.assertEqual(worker.report_context["status"], "completed")
         self.assertIsNotNone(worker.report_context["hardware_snapshot"])
-        self.assertEqual(self.adapter.daq.writes, [])
+        self.assertTrue(self.adapter.daq.writes)
 
     def test_runtime_config_is_applied_at_next_line(self):
         config = self.config()
@@ -414,9 +397,9 @@ class FMAFMGuiTests(unittest.TestCase):
         module = self.window.fm_afm_module
         module.start_monitor(once=True)
         self.wait_until(lambda: not module.busy)
-        self.assertEqual(module.latest["pll_df"], -1.25)
+        self.assertEqual(set(module.latest), {"auxout1", "auxout2", "auxout3", "auxout4"})
         self.assertEqual(len(module.history), 1)
-        self.assertEqual(module.time_views[0][2].getData()[1][0], 2.6)
+        self.assertEqual(module.time_views[0][2].getData()[1][0], 2.5)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "history.csv"
             module.write_history(path)
@@ -442,12 +425,13 @@ class FMAFMGuiTests(unittest.TestCase):
         self.wait_until(lambda: not self.window.controller.is_running)
         self.assertNotIn("error", self.window.controller.parameter_tree.data["runtime"])
         np.testing.assert_allclose(self.window.controller.images["trace"]["auxout3"], 2.6)
-        np.testing.assert_allclose(self.window.controller.images["trace"]["pll_df"], -1.25)
+        np.testing.assert_allclose(self.window.controller.images["trace"]["auxout4"], -0.125)
         reports = list(Path(self.scan_output_dir.name).glob("*_scan_report.txt"))
         self.assertEqual(len(reports), 1)
         report_text = reports[0].read_text(encoding="utf-8")
-        self.assertIn('"pids/0/setpoint": -0.124', report_text)
-        self.assertIn('"plls/0/freqdelta": -1.25', report_text)
+        self.assertNotIn('"pids/', report_text)
+        self.assertNotIn('"plls/', report_text)
+        self.assertIn('"auxouts/2/value": 2.6', report_text)
         self.assertIn('"recorded": [', report_text)
         with tempfile.TemporaryDirectory() as tmp:
             files = self.window.controller.export_gsf_bundle(tmp, module.current_mode)
@@ -455,16 +439,19 @@ class FMAFMGuiTests(unittest.TestCase):
             self.assertIn(b"ZUnits = V", (Path(tmp) / "auxout3_trace.gsf").read_bytes())
         self.assertEqual({key for key, _ in adapter.daq.writes}, {"auxouts/0/offset", "auxouts/1/offset"})
 
-    def test_invalid_feedback_cancels_continuous_sequence(self):
+    def test_invalid_feedback_is_not_read_by_scan(self):
         adapter = self.connect_fake()
         adapter.daq.values["plls/0/locked"] = 0
-        sequence = self.window.scan_sequence_module
-        sequence.repeat_mode.setCurrentIndex(sequence.repeat_mode.findData("continuous"))
+        scan = self.window.scan_module
+        scan.pixels.setValue(2)
+        scan.lines.setValue(1)
+        scan.width.setValue(0.001)
+        scan.height.setValue(0.001)
+        scan.linear.setValue(100)
         self.window.scan_up.click()
         self.wait_until(lambda: not self.window.controller.is_running)
-        self.assertFalse(sequence.active)
-        self.assertIn("error", self.window.controller.parameter_tree.data["runtime"])
-        self.assertEqual(adapter.daq.writes, [])
+        self.assertNotIn("error", self.window.controller.parameter_tree.data["runtime"])
+        self.assertTrue(adapter.daq.writes)
 
     def test_monitor_can_run_during_scan_and_stop_keeps_missing_pixels(self):
         adapter = self.connect_fake()

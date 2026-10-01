@@ -19,9 +19,9 @@
 
 当前程序不配置 PLL、PID、激励、AUX3 或 AUX4；这些项目必须先在 LabOne 中设置并验证。
 
-> **重要安全限制：** 当前 mim-gui 检测到 PLL 失锁、PLL/PID 关闭、AUX3 越界或必要信号读取失败时，会停止 XY 并取消后续扫描序列，但**不会自动关闭 PID，也不会自动撤针**。Stop 也不是硬实时急停；若 LabOne API 正在阻塞，需要等当前通信返回。若实验必须满足“失锁后自动关闭 PID”，当前版本在完成相应代码和实机验证前不满足该要求。
+> **重要安全限制：** 当前速度优先版 mim-gui 不读取 PLL/PID 节点，也不检查 PLL 失锁、PLL/PID 关闭、PID 饱和、AUX 路由或 AUX3/Z 越界。它只会在 AUX1–AUX4 读取失败、通信错误、本地 XY 范围错误或人工 Stop 时停止 XY，并且**不会自动关闭 PID或自动撤针**。Stop 也不是硬实时急停；若 LabOne API 正在阻塞，需要等当前通信返回。正式扫描必须在 LabOne 或独立硬件中实现保护。
 
-当前室温软件限值为 AUX1、AUX2、AUX3 均 `0...5 V`。软件限值不能代替扫描台、放大器和低温条件下的实际标定。
+当前软件只限制 AUX1、AUX2 为 `0...5 V`；AUX3 不再有软件阈值。软件限值不能代替扫描台、放大器和低温条件下的实际标定。
 
 ---
 
@@ -261,7 +261,7 @@ Test-NetConnection 127.0.0.1 -Port 8005
 
 ## 13. 扫描前 LabOne 条件
 
-点击扫描后程序会预检，以下条件缺一不可：
+点击扫描后程序只检查本地扫描几何、时间参数和 AUX1/2 范围。以下反馈条件必须由操作者在 LabOne 中自行确认，程序不会读取或拒绝错误配置：
 
 1. AUX1、AUX2 为 Manual，且无启用的 PID 占用它们。
 2. AUX3 为 Manual、`Scale=0`。
@@ -271,19 +271,11 @@ Test-NetConnection 127.0.0.1 -Port 8005
 6. PID `Center ± Range` 和 AUX3 实际值均在 `0...5 V`。
 7. 旋转后的整个 XY 扫描区域都在 AUX1/2 的 `0...5 V`。
 
-程序不会替你修正配置，只会拒绝扫描并在 Command Log 记录原因。
+程序不会替你修正或验证上述 1–6 项。只有第 7 项仍由本地几何检查执行。
 
 ## 14. 用 FM-AFM Monitor 预检
 
-点击 `Read Once` 或 `Start Monitor`，检查：
-
-- `PLL locked=1`、`PLL enabled=1`、`Z PID enabled=1`；
-- AUX3 位于安全范围并有余量；
-- AUX4 与 Δf 变化一致；
-- `Aux In 1 − Aux Out 4` 接近回环误差；
-- PID Error 小，`PID at limit=0`。
-
-默认时间曲线为 AUX3、AUX4、PID Error；需要留存时使用 `Export History CSV`。
+点击 `Read Once` 或 `Start Monitor` 只能检查 AUX1–AUX4 输出值。PLL lock、PID enable/error/limit、Aux In 回环和路由必须直接在 LabOne 中确认。默认四条时间曲线为 AUX1–AUX4；需要留存时使用 `Export History CSV`。
 
 Monitor 可以与扫描并行，但与扫描共享 HF2 通信锁，可能降低扫描速度。高速扫描前建议先用 Read Once 验证，再停止 Monitor；必须持续监测时使用较慢刷新间隔并实测总时间。
 
@@ -332,19 +324,11 @@ Y：trace 和 retrace 全部完成后才步进到下一行
 Lines × [2 × (Width / Linear + Settle + Pixels × Sample) + Rest]
 ```
 
-实际时间还包含每点 LabOne 写入/读取、路由检查、行起点定位、Python/Qt 调度和可选 Monitor 读取，因此界面估计不是硬件定时保证。
+实际时间还包含每点 LabOne 写入/一次 AUX1–AUX4 批量读取、行起点定位、Python/Qt 调度和可选 Monitor 读取，因此界面估计不是硬件定时保证。
 
 ## 17. 记录通道和图像显示
 
-当前默认记录：
-
-- `Aux Out 3 / Z PID output`：Z 反馈电压，V；
-- `Aux Out 4 / PLL Δf output`：Δf 电压映射，V；
-- `PLL frequency shift`：Δf，Hz；
-- `Z PID error`：PID 误差，V；
-- `Tracked frequency`：PLL 跟踪频率，Hz。
-
-可按需要增加 R、PLL phase error、Aux In 1 等通道；勾选会立即同步到 Channel Images 下拉框。
+当前只提供 `Aux Out 1`、`Aux Out 2`、`Aux Out 3`、`Aux Out 4` 四个成像通道；勾选会立即同步到 Channel Images 下拉框。PLL、PID、Demod 和 Aux In 通道不再由程序采集。
 
 AUX3 是 Z 控制电压，不是已经标定的样品高度。没有 Z 标定时，不得把它解释为 nm。
 
@@ -360,7 +344,7 @@ Controls 中的 Auto Save directory 默认为：
 
 - 勾选 `Auto Save`：暂停和结束时自动保存每个通道/pass 的 `.gsf` 及 `_metadata.json`。
 - 不勾选 Auto Save：不自动导出 GSF，但每次完成、手动停止或异常中止仍会写 `*_scan_report.txt`。
-- scan report 记录扫描参数、通道、显示设置、状态、错误以及最终 HF2 PLL/PID/AUX 快照。
+- scan report 记录扫描参数、通道、显示设置、状态、错误以及最终 AUX1–AUX4 快照；不包含 PLL/PID 参数。
 - `Save GSF` 可手动另存当前数据。
 
 扫描前确认目录可写、磁盘空间足够。
@@ -374,7 +358,7 @@ Controls 中的 Auto Save directory 默认为：
 3. 点击 `Scan Up` 或 `Scan Down`。它只改变 Y 行顺序；每行仍先 trace 后 retrace。
 4. 观察 Command Log，确认预检成功、扫描启动和记录通道正确。
 5. 观察 State 中的 pass、line、pixel 和 Channel Images 逐行更新。
-6. 同时在 LabOne 或低频 Monitor 中关注 PLL Lock、AUX3 和 PID Error。
+6. 在 LabOne 中关注 PLL Lock 和 PID Error；mim-gui Monitor 只能辅助观察 AUX1–AUX4。
 
 扫描开始后，几何、通道和手动 XY 被禁用；Linear、Sample、Settle、Rest 的修改从下一行生效。
 
@@ -395,14 +379,7 @@ Stop 需等待当前 LabOne API 调用返回，不能代替硬件急停。
 
 ## 21. 扫描中的自动检查和人工处置
 
-程序逐点检查：
-
-- PLL 是否启用并锁定；
-- PID 是否启用；
-- AUX3 是否处于 `0...5 V`；
-- 所有选中通道是否读取成功。
-
-程序还周期性复查 AUX1/2 路由。任一检查失败时，XY 停止、连续序列取消、报告记录错误，但 PID 继续由 LabOne 控制。
+程序逐点只检查选中的 AUX 输出值是否读取成功，不检查 PLL/PID、AUX3 阈值或 AUX 路由。反馈安全状态必须由操作者在 LabOne 或独立硬件中持续监控。AUX 读取或通信失败时，XY 停止、连续序列取消、报告记录错误，但 PID 继续由 LabOne 控制。
 
 异常后应：
 
