@@ -42,7 +42,8 @@ class FakeDAQ:
             "pids/0/output": 3, "pids/0/outputchannel": 2,
             "pids/0/error": 0.001, "pids/0/shift": 0.1,
             "pids/0/center": 2.5, "pids/0/range": 0.5,
-            "pids/0/setpoint": -0.124,
+            "pids/0/setpoint": -0.124, "pids/0/p": 2.5, "pids/0/i": 0.75,
+            "pids/0/d": 0.0,
             "auxouts/0/outputselect": -1, "auxouts/1/outputselect": -1,
             "auxouts/2/outputselect": -1, "auxouts/3/outputselect": 4,
             "auxouts/0/value": 2.5, "auxouts/1/value": 2.5,
@@ -161,12 +162,20 @@ class FMAFMAdapterTests(unittest.TestCase):
         self.assertFalse(any("/plls/" in path or "/pids/" in path for path, _flat in self.adapter.daq.batch_reads))
         self.adapter.end_fm_scan()
 
-    def test_report_snapshot_contains_aux_nodes_only(self):
+    def test_report_snapshot_contains_aux_pll_and_pid_nodes(self):
         report = self.adapter.read_fm_report_snapshot()
         nodes = report["nodes"]
         self.assertEqual(report["device_id"], "DEV18388")
-        self.assertEqual(set(nodes), {f"auxouts/{index}/value" for index in range(4)})
         self.assertEqual(nodes["auxouts/2/value"], 2.6)
+        self.assertEqual(nodes["plls/0/freqcenter"], 32768)
+        self.assertEqual(nodes["plls/0/setpoint"], 90)
+        self.assertEqual(nodes["pids/0/p"], 2.5)
+        self.assertEqual(nodes["pids/0/i"], 0.75)
+        self.assertEqual(nodes["pids/0/d"], 0.0)
+        self.assertEqual(
+            [path for path, _flat in self.adapter.daq.batch_reads],
+            ["/dev18388/auxouts/*/value", "/dev18388/plls/0/*", "/dev18388/pids/0/*"],
+        )
         self.assertEqual(report["read_errors"], {})
         self.assertEqual(self.adapter.daq.writes, [])
 
@@ -255,6 +264,11 @@ class FMAFMAdapterTests(unittest.TestCase):
         self.assertEqual(worker.report_context["status"], "completed")
         self.assertIsNotNone(worker.report_context["hardware_snapshot"])
         self.assertTrue(self.adapter.daq.writes)
+        paths = [path for path, _flat in self.adapter.daq.batch_reads]
+        feedback_read_index = next(i for i, path in enumerate(paths) if "/plls/0/*" in path)
+        self.assertTrue(all("/pids/" not in path and "/plls/" not in path for path in paths[:feedback_read_index]))
+        self.assertEqual(paths[feedback_read_index:], ["/dev18388/plls/0/*", "/dev18388/pids/0/*"])
+        self.assertFalse(any("/pids/" in path or "/plls/" in path for path in self.adapter.daq.reads))
 
     def test_runtime_config_is_applied_at_next_line(self):
         config = self.config()
@@ -429,8 +443,10 @@ class FMAFMGuiTests(unittest.TestCase):
         reports = list(Path(self.scan_output_dir.name).glob("*_scan_report.txt"))
         self.assertEqual(len(reports), 1)
         report_text = reports[0].read_text(encoding="utf-8")
-        self.assertNotIn('"pids/', report_text)
-        self.assertNotIn('"plls/', report_text)
+        self.assertIn('"plls/0/freqcenter": 32768', report_text)
+        self.assertIn('"pids/0/p": 2.5', report_text)
+        self.assertIn('"pids/0/i": 0.75', report_text)
+        self.assertIn('"pids/0/d": 0.0', report_text)
         self.assertIn('"auxouts/2/value": 2.6', report_text)
         self.assertIn('"recorded": [', report_text)
         with tempfile.TemporaryDirectory() as tmp:

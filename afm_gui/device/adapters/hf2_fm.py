@@ -45,26 +45,58 @@ class HF2FMInterface:
         return float(reader(self._path(suffix)))
 
     def read_fm_report_snapshot(self) -> dict[str, object]:
-        """Read only AUX1-AUX4 values for the completed-scan report."""
-        values = self.read_fm_snapshot()
-        nodes = {f"auxouts/{index}/value": values[f"auxout{index + 1}"] for index in range(4)}
+        """Read AUX and feedback settings once, after acquisition, for the report."""
+        with self.io_lock:
+            values = self.read_fm_snapshot()
+            nodes = {f"auxouts/{index}/value": values[f"auxout{index + 1}"] for index in range(4)}
+            read_errors = dict(self.fm_errors)
+            daq = self.session.daq_server
+            getter = getattr(daq, "get", None)
 
-        connection = self.connection
-        return {
-            "captured_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            "device_id": str(self.device_id),
-            "host": connection.get("host", ""),
-            "port": connection.get("port", ""),
-            "interface": connection.get("interface", ""),
-            "fm_settings": dict(self.fm_settings),
-            "software_limits": {
-                "xy_min_v": self.xy_min_v,
-                "xy_max_v": self.xy_max_v,
-                "max_step_v": self.xy_step_v,
-            },
-            "nodes": nodes,
-            "read_errors": dict(self.fm_errors),
-        }
+            for suffix in ("plls/0/*", "pids/0/*"):
+                path = self._path(suffix)
+                try:
+                    if not callable(getter):
+                        raise RuntimeError("LabOne DAQ batch get is unavailable")
+                    try:
+                        response = getter(path, flat=True)
+                    except TypeError:
+                        response = getter(path)
+                    flattened = _flatten_batch_response(response)
+                    prefix = self._path("").lower().rstrip("/") + "/"
+                    group = suffix.removesuffix("/*").lower() + "/"
+                    found = 0
+                    for node_path, raw_value in flattened.items():
+                        normalized = node_path.lower()
+                        if normalized.startswith(prefix):
+                            normalized = normalized[len(prefix):]
+                        if not normalized.startswith(group):
+                            continue
+                        value = _batch_scalar(raw_value)
+                        if value is not None:
+                            nodes[normalized] = value
+                            found += 1
+                    if not found:
+                        read_errors[suffix] = "LabOne returned no scalar nodes for this group"
+                except Exception as exc:
+                    read_errors[suffix] = str(exc)
+
+            connection = self.connection
+            return {
+                "captured_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                "device_id": str(self.device_id),
+                "host": connection.get("host", ""),
+                "port": connection.get("port", ""),
+                "interface": connection.get("interface", ""),
+                "fm_settings": dict(self.fm_settings),
+                "software_limits": {
+                    "xy_min_v": self.xy_min_v,
+                    "xy_max_v": self.xy_max_v,
+                    "max_step_v": self.xy_step_v,
+                },
+                "nodes": nodes,
+                "read_errors": read_errors,
+            }
 
     def read_fm_snapshot(self, channels=None) -> dict[str, float]:
         requested = set(FM_CHANNEL_BY_KEY if channels is None else channels)
