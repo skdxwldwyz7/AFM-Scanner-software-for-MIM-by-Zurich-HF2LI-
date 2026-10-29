@@ -87,16 +87,22 @@ class MIMAcquisition:
         self.total_read_s = self.max_read_s = 0.0
         self.pair_count = 0
         self.total_pair_gap_s = self.max_pair_gap_s = 0.0
+        self.read_errors = {key: 0 for key in self.adapters}
+        self.last_read_errors = {}
+        self.settings_errors = {}
+        self._log = lambda message: None
 
     def prepare(self, config, log):
         # All remote queries run in the scan thread, before any XY movement.
+        self._log = log
         for key, adapter in self.adapters.items():
-            settings = adapter.read_mim_settings()
-            self.settings[key] = settings
-            if settings["input_mode"] not in (0, 1):
-                raise RuntimeError(f"{key}: select voltage input A or A-B; MIM images use V")
-            self._check_status(key, adapter)
-            self.validate_timing(config, log, keys=(key,))
+            try:
+                self.settings[key] = adapter.read_mim_settings()
+                self.validate_timing(config, log, keys=(key,))
+            except Exception as exc:
+                self.settings.pop(key, None)
+                self.settings_errors[key] = str(exc)
+                log(f"MIM {key}: settings unavailable ({exc}); continuing X acquisition")
 
     def validate_timing(self, config, log, keys=None):
         for key in keys or self.settings:
@@ -109,21 +115,6 @@ class MIMAcquisition:
                 log(f"MIM {key}: Sample={config.t_sample:g} s < estimated 99% settling "
                     f"{settle_s:.6g} s (tau={setting['time_constant_s']:g} s, "
                     f"{setting['slope_db']} dB/oct); spatial lag may occur")
-
-    def check_line(self):
-        # Latched overload/unlock flags are checked once per line, not per pixel.
-        for key, adapter in self.adapters.items():
-            self._check_status(key, adapter, check_config=True)
-
-    @staticmethod
-    def _check_status(key, adapter, *, check_config=False):
-        status = adapter.read_mim_status()
-        if status & 0x0F:
-            raise RuntimeError(f"{key}: SR830 overload/reference unlock (LIAS={status}); "
-                               "check sensitivity, input and reference before restarting")
-        if check_config and status & 0x30:
-            raise RuntimeError(f"{key}: SR830 frequency range/time constant changed during scan "
-                               f"(LIAS={status}); verify settings and restart")
 
     def __call__(self, channels):
         unknown = set(channels) - set(FM_CHANNEL_BY_KEY) - set(self.adapters)
@@ -140,7 +131,11 @@ class MIMAcquisition:
                 if not math.isfinite(value):
                     raise ValueError("nonfinite X")
             except Exception as exc:
-                raise RuntimeError(f"{key} X read failed: {exc}") from exc
+                value = math.nan
+                self.read_errors[key] += 1
+                self.last_read_errors[key] = str(exc)
+                if self.read_errors[key] == 1:
+                    self._log(f"MIM {key}: X read failed ({exc}); recording NaN and continuing scan")
             finish = time.perf_counter()
             sample[key] = value
             midpoints.append((start + finish) / 2)
@@ -162,6 +157,10 @@ class MIMAcquisition:
         return {"routes": {key: adapter.address for key, adapter in self.adapters.items()},
                 "settings_at_start": self.settings, "query": "OUTP? 1", "unit": "V",
                 "pixel_reads": self.count,
+                "read_error_counts": dict(self.read_errors),
+                "last_read_errors": dict(self.last_read_errors),
+                "settings_errors": dict(self.settings_errors),
+                "sr830_status_checks": False,
                 "mean_read_s": self.total_read_s / self.count if self.count else None,
                 "max_read_s": self.max_read_s,
                 "mean_pair_midpoint_gap_s": self.total_pair_gap_s / self.pair_count if self.pair_count else None,

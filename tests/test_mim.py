@@ -102,8 +102,8 @@ class MIMCoreTests(unittest.TestCase):
         self.assertEqual(hf2.daq.writes, [])
         self.assertTrue(all("?" in command for command in i.instrument.queries + q.instrument.queries))
         i.instrument.settings["ISRC?"] = "2"
-        with self.assertRaisesRegex(RuntimeError, "voltage input"):
-            acquisition.prepare(scan_config(), log.append)
+        acquisition.prepare(scan_config(), log.append)
+        self.assertEqual(acquisition.settings["sr830_I"]["input_mode"], 2)
 
     def test_pixel_queries_only_selected_x_and_aux(self):
         hf2, i, q = FakeHF2(), srs(), srs("GPIB0::9::INSTR", -2.123456789e-6)
@@ -149,7 +149,7 @@ class MIMCoreTests(unittest.TestCase):
         self.assertEqual(worker.report_context["line_timing"]["completed_lines"], 2)
         self.assertEqual({path for path, value in hf2.daq.writes}, {"auxouts/0/offset", "auxouts/1/offset"})
 
-    def test_failed_q_keeps_previous_pairs_and_nan_at_failed_pixel(self):
+    def test_failed_q_records_nan_and_continues_other_channels_and_pixels(self):
         hf2, i, q = FakeHF2(), srs(), srs("GPIB0::9::INSTR")
         calls = []
         def fail_on_second():
@@ -163,13 +163,16 @@ class MIMCoreTests(unittest.TestCase):
         worker.line_data_ready.connect(lambda index, data: lines.append(data))
         worker.failed.connect(errors.append)
         worker.run()
-        self.assertEqual(len(lines), 1)
-        self.assertIn("sr830_Q", errors[0])
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(errors, [])
+        self.assertTrue(np.isnan(lines[0]["sr830_Q"]["trace"][1]))
         for key in scan_config().channels:
             self.assertTrue(math.isfinite(lines[0][key]["trace"][0]))
-            self.assertTrue(np.isnan(lines[0][key]["trace"][1:]).all())
-            self.assertTrue(np.isnan(lines[0][key]["retrace"]).all())
-        self.assertEqual(worker.report_context["status"], "failed")
+            self.assertTrue(math.isfinite(lines[0][key]["trace"][2]))
+            self.assertTrue(np.isfinite(lines[0][key]["retrace"]).all())
+        self.assertTrue(math.isfinite(lines[0]["sr830_I"]["trace"][1]))
+        self.assertEqual(worker.report_context["status"], "completed")
+        self.assertEqual(worker.report_context["acquisition"]["read_error_counts"]["sr830_Q"], 1)
         self.assertFalse(hf2._fm_scan_active)
 
     def test_stop_in_q_does_not_move_xy_or_fill_future_pixels(self):
@@ -184,24 +187,39 @@ class MIMCoreTests(unittest.TestCase):
         self.assertTrue(np.isnan(lines[0]["sr830_Q"]["trace"][1:]).all())
         self.assertEqual(worker.report_context["status"], "stopped")
 
-    def test_overload_preflight_no_xy_writes_and_line_overload_excluded(self):
+    def test_all_sr830_status_bits_ignored_without_status_queries(self):
         hf2, i, q = FakeHF2(), srs(), srs("GPIB0::9::INSTR")
-        q.instrument.settings["LIAS?"] = "1"
-        worker, _ = self.worker(hf2, i, q)
-        worker.run()
-        self.assertEqual(worker.report_context["status"], "failed")
-        self.assertEqual(hf2.daq.writes, [])
-        q.instrument.settings["LIAS?"] = "0"
-        def overload():
-            q.instrument.settings["LIAS?"] = "4"
-            return 1e-6
-        q.instrument.value = overload
+        q.instrument.settings["LIAS?"] = "255"
         worker, _ = self.worker(hf2, i, q)
         lines = []
         worker.line_data_ready.connect(lambda index, data: lines.append(data))
         worker.run()
-        self.assertTrue(all(np.isnan(values).all() for passes in lines[0].values() for values in passes.values()))
-        self.assertEqual(worker.report_context["status"], "failed")
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(all(np.isfinite(values).all() for passes in lines[0].values() for values in passes.values()))
+        self.assertEqual(worker.report_context["status"], "completed")
+        self.assertNotIn("LIAS?", i.instrument.queries + q.instrument.queries)
+        self.assertTrue(hf2.daq.writes)
+
+    def test_sr830_settings_failure_and_persistent_bad_x_do_not_stop_scan(self):
+        hf2, i, q = FakeHF2(), srs(), srs("GPIB0::9::INSTR")
+        del i.instrument.settings["OFLT?"]
+        i.instrument.value = "nan"
+        q.instrument.value = "invalid"
+        worker, _ = self.worker(hf2, i, q)
+        lines, errors = [], []
+        worker.line_data_ready.connect(lambda index, data: lines.append(data))
+        worker.failed.connect(errors.append)
+        worker.run()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            for scan_pass in ("trace", "retrace"):
+                self.assertTrue(np.isnan(line["sr830_I"][scan_pass]).all())
+                self.assertTrue(np.isnan(line["sr830_Q"][scan_pass]).all())
+                self.assertTrue(np.isfinite(line["auxout3"][scan_pass]).all())
+        self.assertEqual(worker.report_context["status"], "completed")
+        self.assertEqual(worker.report_context["acquisition"]["read_error_counts"], {"sr830_I": 12, "sr830_Q": 12})
+        self.assertIn("sr830_I", worker.report_context["acquisition"]["settings_errors"])
 
     def test_mim_never_falls_back_to_mock(self):
         device = AdapterScannerDevice(lambda: None)

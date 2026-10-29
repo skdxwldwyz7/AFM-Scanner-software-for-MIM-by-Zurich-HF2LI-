@@ -140,13 +140,6 @@ class SRSLockinAdapter:
         return dict(self.mim_settings)
 
     @serialized_srs_io
-    def read_mim_status(self) -> int:
-        value = float(self.instrument.ask("LIAS?"))
-        if not math.isfinite(value) or not value.is_integer() or not 0 <= value <= 255:
-            raise ValueError(f"Invalid LIAS? response: {value}")
-        return int(value)
-
-    @serialized_srs_io
     def close(self) -> None:
         close = getattr(self.instrument, "close", None)
         if callable(close):

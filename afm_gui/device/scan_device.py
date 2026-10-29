@@ -330,18 +330,6 @@ class _AdapterScanWorker(QObject):
             retrace = self._acquire_pass(line_index, "retrace", end, start)
             for channel in self._channels:
                 data[channel]["retrace"] = retrace[channel]
-        check_line = getattr(self._acquisition_callback, "check_line", None)
-        if callable(check_line):
-            try:
-                check_line()
-            except Exception:
-                # Latched status cannot identify the affected pixel. Exclude the
-                # whole line if overload/unlock occurred, and retain earlier lines.
-                if self._partial_line is not None:
-                    for passes in self._partial_line.values():
-                        for values in passes.values():
-                            values.fill(np.nan)
-                raise
         self._partial_line = None
         return self._image_order(data)
 
@@ -382,7 +370,9 @@ class _AdapterScanWorker(QObject):
                     break
             sample = self._read_sample()
             if self._config.scan_mode in FM_SCAN_MODES:
-                missing = [key for key in self._channels if not math.isfinite(sample.get(key, math.nan))]
+                missing = [key for key in self._channels
+                           if not (self._config.scan_mode == "mim" and key in {"sr830_I", "sr830_Q"})
+                           and not math.isfinite(sample.get(key, math.nan))]
                 if missing:
                     raise RuntimeError("Missing or invalid scan values: " + ", ".join(missing))
             if not sample and not self._missing_sample_logged:

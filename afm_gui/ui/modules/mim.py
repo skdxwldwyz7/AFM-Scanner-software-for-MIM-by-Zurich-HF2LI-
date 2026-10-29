@@ -30,6 +30,7 @@ class MIMModule(QObject):
             "HF2 AUX1/2: XY; AUX3: Z; AUX4: Δf.\n"
             "I and Q each use OUTP? 1 from a separate GPIB instrument. "
             "Assign MIM I / MIM Q and edit addresses in Device Manager."
+            " SR830 status checks are OFF; failed X readings become NaN and scanning continues."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -165,6 +166,7 @@ class MIMModule(QObject):
             f"Mean full line (trace + retrace): {seconds(lines.get('mean_line_s'))}\n"
             f"Mean pixel I/O: {seconds(reading.get('mean_read_s'))}\n"
             f"Max pixel I/O: {seconds(reading.get('max_read_s'))}\n"
+            f"SR830 failed reads: {reading.get('read_error_counts', {})}\n"
             f"Mean I/Q query midpoint gap: {seconds(reading.get('mean_pair_midpoint_gap_s'))}\n"
             "Host timing only; the two instruments are read sequentially."
         )
