@@ -88,7 +88,7 @@ class StorageModule(QObject):
             return
         self._sync_extra_metadata()
         directory = Path(self.auto_save_dir.text().strip() or str(self.DEFAULT_AUTO_SAVE_DIR))
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         line_number = self.controller.current_line_index + 1
         prefix = f"afm_{timestamp}_{event}_line{line_number:04d}"
         self.controller.parameter_tree.append_path(

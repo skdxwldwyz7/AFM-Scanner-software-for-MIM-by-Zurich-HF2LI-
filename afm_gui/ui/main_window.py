@@ -12,13 +12,14 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSpinBox,
+    QStackedWidget,
     QWidget,
 )
 
 from afm_gui.core.scan_config import ScanDirection
 from afm_gui.core.scan_controller import ScanController
 from afm_gui.core.lockin_acquisition import LockinScanAcquisition, ZeroScanAcquisition
-from afm_gui.core.fm_afm import FMAcquisition
+from afm_gui.core.fm_afm import FMAcquisition, FM_SCAN_MODES
 from afm_gui.device.scan_device import AdapterScannerDevice
 from afm_gui.ui.modules.approach import ApproachModule
 from afm_gui.ui.modules.channel_images import ChannelImagesModule
@@ -32,6 +33,7 @@ from afm_gui.ui.modules.spectroscopy import SpectroscopyModule
 from afm_gui.ui.modules.stage import StageModule
 from afm_gui.ui.modules.storage import StorageModule
 from afm_gui.ui.modules.fm_afm import FMAFMModule
+from afm_gui.ui.modules.mim import MIMModule
 from afm_gui.ui.panels.command_log import build_command_log_panel
 from afm_gui.ui.panels.controls import build_controls_panel
 from afm_gui.ui.panels.status import build_status_panel
@@ -73,6 +75,7 @@ class MainWindow(QMainWindow):
         self.stage_module = StageModule(self._append_log, self.device_manager, self)
         self.lockin_module = LockInModule(self._append_log, self.device_manager, self)
         self.fm_afm_module = FMAFMModule(self.device_manager, self._append_log, self)
+        self.mim_module = MIMModule(self.device_manager, self.scan_module, self)
         self.approach_module = ApproachModule(self._append_log, self.device_manager, self)
         self.storage_module = StorageModule(
             self.controller,
@@ -138,7 +141,10 @@ class MainWindow(QMainWindow):
         self.control_dock.addWidget(self._control_box())
         self.device_dock.addWidget(self._device_manager_box())
         self.stage_dock.addWidget(self._stage_map_box())
-        self.fm_afm_dock.addWidget(self.fm_afm_module.widget)
+        self.fm_mim_stack = QStackedWidget()
+        self.fm_mim_stack.addWidget(self.fm_afm_module.widget)
+        self.fm_mim_stack.addWidget(self.mim_module.widget)
+        self.fm_afm_dock.addWidget(self.fm_mim_stack)
         self.lockin_dock.addWidget(self._lockin_box())
         self.approach_dock.addWidget(self._approach_box())
         self.spectroscopy_dock.addWidget(self._spectroscopy_box())
@@ -338,6 +344,7 @@ class MainWindow(QMainWindow):
         self.approach_module.controller.state_changed.connect(self._on_approach_state_changed)
         self.controller.scan_failed.connect(self.scan_sequence_module.cancel_on_error)
         self.fm_afm_module.activity_changed.connect(self._sync_hardware_activity)
+        self.device.acquisition_timing_changed.connect(self.mim_module.show_report)
 
     def _on_controller_state_changed(self, state: str) -> None:
         self.state_label.setText(state)
@@ -353,6 +360,8 @@ class MainWindow(QMainWindow):
         if state == "Paused":
             self.storage_module.auto_save("pause")
         if state == "Idle":
+            if self.controller.config.scan_mode == "mim":
+                self.mim_module.show_report(self.controller.scan_report_context)
             self.storage_module.write_scan_report()
             self.storage_module.auto_save("finish")
             self.metadata_module.refresh()
@@ -371,14 +380,23 @@ class MainWindow(QMainWindow):
             self.scan_down.setEnabled(not approach and not self.fm_afm_module.moving)
 
     def _validate_scan_start(self) -> None:
-        if self.fm_afm_module.moving or self.approach_module.controller.is_running:
+        if (self.fm_afm_module.moving or self.approach_module.controller.is_running
+                or self.approach_module.controller.is_paused):
             raise RuntimeError("Stop manual XY/approach motion before scanning")
         if self.device_module._connection_busy:
             raise RuntimeError("Wait for the device connection to finish")
+        if self.scan_module.current_mode.name == "mim":
+            self._scan_acquisition_callback()  # Local role/address checks, no I/O.
 
     def _on_scan_mode_changed(self, mode) -> None:
         self.channel_images_module.reset_for_mode(mode)
-        if mode.name == "fm_afm" and self._last_scan_mode != "fm_afm":
+        mim = mode.name == "mim"
+        self.fm_afm_module.set_monitor_allowed(not mim)
+        self.fm_mim_stack.setCurrentIndex(1 if mim else 0)
+        title = "MIM / SR830 Advisor" if mim else "FM-AFM Monitor"
+        self.fm_afm_dock.label.setText(title)
+        self.panel_actions["fm_afm"].setText(title)
+        if mode.name in FM_SCAN_MODES and self._last_scan_mode not in FM_SCAN_MODES:
             self.scan_module.xc.setValue(2.5)
             self.scan_module.yc.setValue(2.5)
             self.scan_module.width.setValue(0.1)
@@ -449,13 +467,16 @@ class MainWindow(QMainWindow):
             "lockin": self.lockin_module.snapshot(),
             "approach": self.approach_module.snapshot(),
             "fm_afm": self.fm_afm_module.snapshot(),
+            "mim": self.mim_module.snapshot(),
         }
 
     def _scan_acquisition_callback(self):
-        if self.scan_module.current_mode.name == "fm_afm":
+        if self.scan_module.current_mode.name in FM_SCAN_MODES:
             adapter = self.device_manager.adapter_for_function("scan_scanner")
             if adapter is None or not hasattr(adapter, "read_fm_snapshot"):
                 raise RuntimeError("FM-AFM scanner must be the connected HF2LI")
+            if self.scan_module.current_mode.name == "mim":
+                return self.mim_module.acquisition(adapter)
             return FMAcquisition(adapter)
         adapters = self.lockin_module.scan_adapters()
         if not adapters:

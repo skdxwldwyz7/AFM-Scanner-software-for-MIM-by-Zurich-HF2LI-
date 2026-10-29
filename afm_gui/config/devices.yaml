@@ -14,6 +14,16 @@ functions:
   required_kind: lockin
   required_capability: lockin_demod
   device: zurich_HF2LI
+- name: mim_i
+  label: MIM I / SR830 X
+  required_kind: lockin
+  required_capability: lockin_demod
+  device: sr830_I
+- name: mim_q
+  label: MIM Q / SR830 X
+  required_kind: lockin
+  required_capability: lockin_demod
+  device: sr830_Q
 devices:
 - name: scanner_mock
   label: Mock AFM Scanner
@@ -95,6 +105,32 @@ devices:
       xy_min_v: 0.0
       xy_max_v: 5.0
       max_step_v: 0.01
+- name: sr830_I
+  label: MIM I / SR830 (X)
+  kind: lockin
+  driver: srs.sr830
+  enabled: true
+  capabilities:
+  - lockin_demod
+  - lockin_output
+  connection:
+    backend: visa
+    address: GPIB0::8::INSTR
+    kwargs:
+      timeout: 1.0
+- name: sr830_Q
+  label: MIM Q / SR830 (X)
+  kind: lockin
+  driver: srs.sr830
+  enabled: true
+  capabilities:
+  - lockin_demod
+  - lockin_output
+  connection:
+    backend: visa
+    address: GPIB0::9::INSTR
+    kwargs:
+      timeout: 1.0
 - name: srs_sr830
   label: SRS SR830 Lock-in
   kind: lockin

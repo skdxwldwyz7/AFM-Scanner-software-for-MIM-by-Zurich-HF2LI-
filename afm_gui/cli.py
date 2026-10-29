@@ -204,6 +204,8 @@ def _run_lockin_channel(args: argparse.Namespace, channel: str) -> None:
 def _cmd_scan(args: argparse.Namespace) -> int:
     registry = _registry(args)
     mode = _mode(registry, args.mode)
+    if mode.name == "mim":
+        raise SystemExit("MIM requires real HF2/SR830 acquisition in the GUI; this CLI scan command is mock-only")
     config = _scan_config(args, mode)
     direction = _direction(args.direction)
     tree = build_parameter_tree(

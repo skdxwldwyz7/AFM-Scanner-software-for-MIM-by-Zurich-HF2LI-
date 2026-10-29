@@ -34,6 +34,7 @@ class FMAFMModule(QObject):
         self._move_worker = None
         self._scan_active = False
         self._external_motion = False
+        self._monitor_allowed = True
         self.widget = build_fm_afm_panel(self)
         self.monitor_start.clicked.connect(lambda: self.start_monitor())
         self.monitor_read.clicked.connect(lambda: self.start_monitor(once=True))
@@ -57,7 +58,7 @@ class FMAFMModule(QObject):
         return self._move_thread is not None
 
     def adapter(self):
-        adapter = self.manager.adapter_for_function("lockin")
+        adapter = self.manager.adapter_for_function("scan_scanner")
         if adapter is None or not hasattr(adapter, "read_fm_snapshot"):
             raise RuntimeError("Connect Zurich HF2LI in Device Manager first")
         return adapter
@@ -80,11 +81,19 @@ class FMAFMModule(QObject):
         self._scan_active = active
         self._update_controls()
 
+    def set_monitor_allowed(self, allowed):
+        self._monitor_allowed = bool(allowed)
+        if not allowed:
+            self.stop_monitor()
+        self._update_controls()
+
     def set_external_motion(self, active):
         self._external_motion = active
         self._update_controls()
 
     def start_monitor(self, *, once=False):
+        if not self._monitor_allowed:
+            return
         if self._monitor_thread is not None:
             return
         try:
@@ -189,8 +198,8 @@ class FMAFMModule(QObject):
 
     def _update_controls(self):
         monitoring = self._monitor_thread is not None
-        self.monitor_start.setEnabled(not monitoring)
-        self.monitor_read.setEnabled(not monitoring)
+        self.monitor_start.setEnabled(not monitoring and self._monitor_allowed)
+        self.monitor_read.setEnabled(not monitoring and self._monitor_allowed)
         self.monitor_stop.setEnabled(monitoring)
         self.monitor_interval.setEnabled(not monitoring)
         manual = not self.moving and not self._scan_active and not self._external_motion

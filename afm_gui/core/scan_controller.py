@@ -9,6 +9,7 @@ import time
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from afm_gui.core.fm_afm import FM_SCAN_MODES
 from afm_gui.core.scan_config import ScanConfig, ScanDirection
 from afm_gui.core.parameter_tree import (
     ParameterTree,
@@ -19,7 +20,7 @@ from afm_gui.core.parameter_tree import (
     write_parameter_tree_json,
 )
 from afm_gui.core.scan_geometry import generate_scan_lines, line_time, pos_to_voltage
-from afm_gui.core.scan_modes import ScanModeConfig
+from afm_gui.core.scan_modes import ChannelConfig, ScanModeConfig
 from afm_gui.data.gsf import safe_filename, write_gsf
 from afm_gui.protocol import spm_commands as cmd
 
@@ -100,10 +101,15 @@ class ScanController(QObject):
 
         if hasattr(self.device, "configure_scan"):
             self.device.configure_scan(config, self.lines)
-        if config.scan_mode != "fm_afm":
+        if config.scan_mode not in FM_SCAN_MODES:
             self.device.send_commands(self._first_line_commands())
         interval_ms = int(max(20.0, line_time(config) * 1000.0))
-        self.device.start_scan(config.lines, config.pixels, interval_ms, config.channels)
+        try:
+            self.device.start_scan(config.lines, config.pixels, interval_ms, config.channels)
+        except Exception as exc:
+            self._on_failed(str(exc))
+            self._on_finished()
+            raise
         self.image_changed.emit(self.images)
         self.state_changed.emit("Scanning")
         channels = ", ".join(config.channels)
@@ -113,7 +119,7 @@ class ScanController(QObject):
     def pause(self) -> None:
         if not self._running or self._paused:
             return
-        if self.config.scan_mode != "fm_afm":
+        if self.config.scan_mode not in FM_SCAN_MODES:
             self.device.send_commands([cmd.pause()])
         self.device.pause()
         self._paused = True
@@ -122,7 +128,7 @@ class ScanController(QObject):
     def resume(self) -> None:
         if not self._running or not self._paused:
             return
-        if self.config.scan_mode != "fm_afm":
+        if self.config.scan_mode not in FM_SCAN_MODES:
             self.device.send_commands([cmd.unpause()])
         self.device.resume(int(max(20.0, line_time(self.config) * 1000.0)))
         self._paused = False
@@ -131,7 +137,7 @@ class ScanController(QObject):
     def stop(self) -> None:
         if not self._running:
             return
-        if self.config.scan_mode != "fm_afm":
+        if self.config.scan_mode not in FM_SCAN_MODES:
             self.device.send_commands([cmd.stop()])
         self.device.stop()
 
@@ -176,6 +182,22 @@ class ScanController(QObject):
     ) -> list[Path]:
         output_dir = Path(directory)
         output_dir.mkdir(parents=True, exist_ok=True)
+        if mode is None or mode.name != self.config.scan_mode:
+            # The GUI may already be configured for the *next* scan. Export
+            # with the recorded mode/units, not the current mode selector.
+            initial = self.parameter_tree.data.get("scan", {}).get("parameters", {}).get("initial", {})
+            recorded_units = initial.get("channels", {}).get("units", {})
+            mode = ScanModeConfig(
+                name=self.config.scan_mode,
+                label=initial.get("mode", {}).get("label", self.config.scan_mode),
+                channels=tuple(ChannelConfig(
+                    channel, channel,
+                    recorded_units.get(channel) or (
+                        "V" if self.config.scan_mode in FM_SCAN_MODES else "nm" if channel == "topography" else ""
+                    ),
+                ) for channel in self.config.channels),
+                scan_passes=self.config.scan_passes,
+            )
         sync_scan_config_to_tree(self.parameter_tree, self.config, self.direction, mode=mode)
         self.parameter_tree.set_path("runtime.exported_utc", self.parameter_tree.data["scan"]["parameters"]["updated_utc"])
         exported = []
@@ -205,22 +227,35 @@ class ScanController(QObject):
                         "ScanPass": scan_pass,
                         "MetadataFile": metadata_filename,
                     },
-                    preserve_missing=self.config.scan_mode == "fm_afm",
+                    preserve_missing=self.config.scan_mode in FM_SCAN_MODES,
                 )
                 exported.append(path)
+
+        raw_filename = None
+        if self.config.scan_mode == "mim":
+            # GSF is float32 by specification. Keep every returned digit in a
+            # companion float64 archive, including NaN for unacquired pixels.
+            raw_filename = f"{prefix}_raw.npz" if prefix else "raw.npz"
+            raw_path = output_dir / raw_filename
+            np.savez_compressed(raw_path, **{
+                f"{scan_pass}__{channel}": np.asarray(image, dtype=np.float64)
+                for scan_pass, channels in self.images.items() for channel, image in channels.items()
+            })
+            exported.append(raw_path)
 
         write_parameter_tree_json(
             output_dir / metadata_filename,
             self.parameter_tree,
             extra={
                 "data": {
-                    "format": "Gwyddion Simple Field",
+                    "format": "Gwyddion Simple Field + float64 NPZ" if raw_filename else "Gwyddion Simple Field",
                     "files": [path.name for path in exported],
+                    "raw_float64_archive": raw_filename,
                 }
             },
         )
         self.export_finished.emit(str(output_dir))
-        self.log_message.emit(f"Exported {len(exported)} GSF files and {metadata_filename} to {output_dir}")
+        self.log_message.emit(f"Exported {len(exported)} data files and {metadata_filename} to {output_dir}")
         return exported
 
     def _first_line_commands(self) -> list[str]:
@@ -298,7 +333,7 @@ class ScanController(QObject):
         start, end = self.lines[line_index]
         self.probe_position_changed.emit(float(end[0]), float(end[1]))
         next_line = line_index + 1
-        if next_line < len(self.lines) and self.config.scan_mode != "fm_afm":
+        if next_line < len(self.lines) and self.config.scan_mode not in FM_SCAN_MODES:
             self.device.send_commands(self._next_line_commands(next_line))
 
     def _on_scan_progress(

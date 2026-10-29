@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import math
 import threading
 import time
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 import numpy as np
 from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 
+from afm_gui.core.fm_afm import FM_SCAN_MODES
 from afm_gui.core.scan_config import ScanConfig
 from afm_gui.core.scan_geometry import pos_to_voltage
 from afm_gui.device.mock_device import MockScannerDevice
@@ -28,6 +30,7 @@ class AdapterScannerDevice(QObject):
     scan_finished = pyqtSignal()
     scan_failed = pyqtSignal(str)
     scan_report_ready = pyqtSignal(object)
+    acquisition_timing_changed = pyqtSignal(object)
 
     def __init__(
         self,
@@ -53,9 +56,9 @@ class AdapterScannerDevice(QObject):
         if self._thread is not None:
             raise RuntimeError("Previous scan worker has not finished")
         adapter = self._scanner_adapter_provider()
-        if getattr(adapter, "fm_readonly", False) and config.scan_mode != "fm_afm":
-            raise RuntimeError("HF2 FM-AFM profile requires FM-AFM scan mode")
-        if config.scan_mode == "fm_afm":
+        if getattr(adapter, "fm_readonly", False) and config.scan_mode not in FM_SCAN_MODES:
+            raise RuntimeError("HF2 FM-AFM profile requires FM-AFM or MIM scan mode")
+        if config.scan_mode in FM_SCAN_MODES:
             if adapter is None or not hasattr(adapter, "validate_fm_scan"):
                 raise RuntimeError("Connect Zurich HF2LI and assign it to Scan Scanner before FM-AFM scanning")
             # Geometry is local; remote preflight runs in the worker so a slow
@@ -84,7 +87,7 @@ class AdapterScannerDevice(QObject):
     ) -> None:
         adapter = self._scanner_adapter_provider()
         if adapter is None or not hasattr(adapter, "set_axis_voltage"):
-            if self._config.scan_mode == "fm_afm":
+            if self._config.scan_mode in FM_SCAN_MODES:
                 raise RuntimeError("FM-AFM requires a connected HF2LI; mock fallback is disabled")
             self._using_mock = True
             self.command_logged.emit("No connected scan_scanner adapter; using mock scanner fallback")
@@ -124,8 +127,8 @@ class AdapterScannerDevice(QObject):
     def _start_worker(self, adapter: object, channels: tuple[str, ...]) -> None:
         if self._worker is not None:
             self._worker.request_stop()
-        thread = QThread(self)
         acquisition_callback = self._acquisition_callback_provider() if self._acquisition_callback_provider else None
+        thread = QThread(self)
         worker = _AdapterScanWorker(
             adapter=adapter,
             config=self._config,
@@ -141,6 +144,7 @@ class AdapterScannerDevice(QObject):
         worker.scan_progress_changed.connect(self.scan_progress_changed.emit)
         worker.command_logged.connect(self.command_logged.emit)
         worker.failed.connect(self.scan_failed.emit)
+        worker.acquisition_timing_changed.connect(self.acquisition_timing_changed.emit)
         worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(self._on_worker_finished)
@@ -173,6 +177,7 @@ class _AdapterScanWorker(QObject):
     command_logged = pyqtSignal(str)
     finished = pyqtSignal()
     failed = pyqtSignal(str)
+    acquisition_timing_changed = pyqtSignal(object)
 
     def __init__(
         self,
@@ -197,6 +202,9 @@ class _AdapterScanWorker(QObject):
         self._pending_config = None
         self._config_lock = threading.Lock()
         self._xy_position = None
+        self._partial_line = None
+        self._line_count = 0
+        self._line_total_s = self._line_max_s = 0.0
 
     def set_pending_config(self, config: ScanConfig) -> None:
         with self._config_lock:
@@ -208,10 +216,14 @@ class _AdapterScanWorker(QObject):
         started_utc = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
         started_monotonic = time.monotonic()
         failure_message = ""
+        line_index = -1
         try:
-            if self._config.scan_mode == "fm_afm":
+            if self._config.scan_mode in FM_SCAN_MODES:
                 if self._acquisition_callback is None:
                     raise RuntimeError("FM-AFM acquisition callback is required")
+                prepare = getattr(self._acquisition_callback, "prepare", None)
+                if callable(prepare):
+                    prepare(self._config, self.command_logged.emit)
                 self._adapter.begin_fm_scan(self._config, self._lines)
                 fm_scan_started = True
             for line_index, (start, end) in enumerate(self._lines):
@@ -219,16 +231,34 @@ class _AdapterScanWorker(QObject):
                     if self._pending_config is not None:
                         self._config = self._pending_config
                         self._pending_config = None
+                        validate_timing = getattr(self._acquisition_callback, "validate_timing", None)
+                        if callable(validate_timing):
+                            validate_timing(self._config, self.command_logged.emit)
                 if self._stop_requested.is_set():
                     break
                 self._wait_if_paused()
                 if self._stop_requested.is_set():
                     break
+                line_start = time.monotonic()
                 data = self._acquire_line(line_index, start, end)
+                duration = time.monotonic() - line_start
+                self._line_count += 1
+                self._line_total_s += duration
+                self._line_max_s = max(self._line_max_s, duration)
                 self.line_data_ready.emit(line_index, data)
+                snapshot = getattr(self._acquisition_callback, "snapshot", None)
+                if callable(snapshot):
+                    self.acquisition_timing_changed.emit({
+                        "status": "running", "acquisition": snapshot(),
+                        "line_timing": self._line_timing(),
+                    })
                 if self._config.t_rest > 0:
                     self._sleep(self._config.t_rest)
         except Exception as exc:
+            # Preserve the last good pixels even when a query fails mid-line.
+            # Each I/Q pair is committed atomically by _acquire_pass.
+            if self._partial_line is not None:
+                self.line_data_ready.emit(line_index, self._image_order(self._partial_line))
             failure_message = str(exc)
             self.command_logged.emit(f"Scan adapter acquisition failed: {exc}")
             self.failed.emit(str(exc))
@@ -243,7 +273,7 @@ class _AdapterScanWorker(QObject):
                         self.failed.emit(failure_message)
             hardware_snapshot = None
             hardware_snapshot_error = ""
-            if self._config.scan_mode == "fm_afm" and hasattr(self._adapter, "read_fm_report_snapshot"):
+            if self._config.scan_mode in FM_SCAN_MODES and hasattr(self._adapter, "read_fm_report_snapshot"):
                 try:
                     hardware_snapshot = self._adapter.read_fm_report_snapshot()
                 except Exception as exc:
@@ -258,11 +288,22 @@ class _AdapterScanWorker(QObject):
                     "finished_utc": finished_utc,
                     "duration_s": max(0.0, time.monotonic() - started_monotonic),
                     "error": failure_message,
+                    "error_line_index": line_index if failure_message else None,
                     "hardware_snapshot": hardware_snapshot,
                     "hardware_snapshot_error": hardware_snapshot_error,
+                    "line_timing": self._line_timing(),
                 }
             )
+            snapshot = getattr(self._acquisition_callback, "snapshot", None)
+            if callable(snapshot):
+                self.report_context["acquisition"] = snapshot()
             self.finished.emit()
+
+    def _line_timing(self):
+        return {"completed_lines": self._line_count,
+                "mean_line_s": self._line_total_s / self._line_count if self._line_count else None,
+                "max_line_s": self._line_max_s,
+                "includes": "trace/retrace, motion, settle, pause and I/O; excludes line Rest"}
 
     def request_stop(self) -> None:
         self._stop_requested.set()
@@ -275,6 +316,11 @@ class _AdapterScanWorker(QObject):
         self._pause_requested.clear()
 
     def _acquire_line(self, line_index: int, start: np.ndarray, end: np.ndarray) -> dict[str, dict[str, np.ndarray]]:
+        self._partial_line = {
+            channel: {scan_pass: np.full(self._config.pixels, np.nan, dtype=float)
+                      for scan_pass in self._config.scan_passes}
+            for channel in self._channels
+        } if self._config.scan_mode in FM_SCAN_MODES else None
         trace = self._acquire_pass(line_index, "trace", start, end)
         data: dict[str, dict[str, np.ndarray]] = {
             channel: {"trace": trace[channel]}
@@ -283,15 +329,38 @@ class _AdapterScanWorker(QObject):
         if "retrace" in self._config.scan_passes:
             retrace = self._acquire_pass(line_index, "retrace", end, start)
             for channel in self._channels:
-                data[channel]["retrace"] = retrace[channel][::-1] if self._config.scan_mode == "fm_afm" else retrace[channel]
-        return data
+                data[channel]["retrace"] = retrace[channel]
+        check_line = getattr(self._acquisition_callback, "check_line", None)
+        if callable(check_line):
+            try:
+                check_line()
+            except Exception:
+                # Latched status cannot identify the affected pixel. Exclude the
+                # whole line if overload/unlock occurred, and retain earlier lines.
+                if self._partial_line is not None:
+                    for passes in self._partial_line.values():
+                        for values in passes.values():
+                            values.fill(np.nan)
+                raise
+        self._partial_line = None
+        return self._image_order(data)
+
+    def _image_order(self, data):
+        if self._config.scan_mode not in FM_SCAN_MODES:
+            return data
+        return {channel: {scan_pass: values[::-1] if scan_pass == "retrace" else values
+                          for scan_pass, values in passes.items()}
+                for channel, passes in data.items()}
 
     def _acquire_pass(self, line_index: int, scan_pass: str, start: np.ndarray, end: np.ndarray) -> dict[str, np.ndarray]:
         pixels = max(1, int(self._config.pixels))
-        values = {
-            channel: np.full(pixels, np.nan if self._config.scan_mode == "fm_afm" else 0.0, dtype=float)
-            for channel in self._channels
-        }
+        if self._partial_line is not None:
+            values = {channel: self._partial_line[channel][scan_pass] for channel in self._channels}
+        else:
+            values = {
+                channel: np.full(pixels, np.nan if self._config.scan_mode in FM_SCAN_MODES else 0.0, dtype=float)
+                for channel in self._channels
+            }
         points = np.linspace(start, end, pixels)
         progress_step = max(1, pixels // 100)
         last_progress_emit = 0.0
@@ -306,12 +375,16 @@ class _AdapterScanWorker(QObject):
                 self._set_xy_voltage(point)
             if self._stop_requested.is_set():
                 break
-            if self._config.scan_mode == "fm_afm":
+            if self._config.scan_mode in FM_SCAN_MODES:
                 self._sleep(self._config.t_sample)
                 self._wait_if_paused()
                 if self._stop_requested.is_set():
                     break
             sample = self._read_sample()
+            if self._config.scan_mode in FM_SCAN_MODES:
+                missing = [key for key in self._channels if not math.isfinite(sample.get(key, math.nan))]
+                if missing:
+                    raise RuntimeError("Missing or invalid scan values: " + ", ".join(missing))
             if not sample and not self._missing_sample_logged:
                 self.command_logged.emit("Acquisition callback returned no channel data; filling samples with 0")
                 self._missing_sample_logged = True
@@ -328,13 +401,13 @@ class _AdapterScanWorker(QObject):
             if should_emit_progress:
                 self.scan_progress_changed.emit(line_index, self._config.lines, index, pixels, scan_pass)
                 last_progress_emit = now
-            if self._config.scan_mode != "fm_afm":
+            if self._config.scan_mode not in FM_SCAN_MODES:
                 self._sleep(self._config.t_sample)
         return values
 
     def _set_xy_voltage(self, point: np.ndarray) -> None:
         x_v, y_v = pos_to_voltage(point, self._config)
-        if self._config.scan_mode == "fm_afm":
+        if self._config.scan_mode in FM_SCAN_MODES:
             if self._xy_position is None:
                 self._xy_position = self._adapter.read_xy()
             self._xy_position = ramp_xy(

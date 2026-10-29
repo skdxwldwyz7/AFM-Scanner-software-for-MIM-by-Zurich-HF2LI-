@@ -73,7 +73,7 @@ class ChannelImagesModule(QObject):
         self.latest_lines = {}
         self.display_count.setValue(min(8, max(1, mode.default_display_count)))
         self.set_display_count(self.display_count.value())
-        self.sync_channel_selectors(mode.channel_names)
+        self.sync_channel_selectors(mode.default_channels)
         self.assign_default_view_channels(mode)
 
     def show_image(self, images: object, *, refresh_all: bool = False) -> None:
@@ -256,10 +256,10 @@ class ChannelImagesModule(QObject):
 
     def assign_default_view_channels(self, mode: ScanModeConfig) -> None:
         for index, selector in enumerate(self.image_selectors()):
-            if index < len(mode.channel_names):
-                self._set_selector_channel(selector, mode.channel_names[index])
-        if mode.channel_names:
-            self._set_selector_channel(self.line_channel_selector, mode.channel_names[0])
+            if index < len(mode.default_channels):
+                self._set_selector_channel(selector, mode.default_channels[index])
+        if mode.default_channels:
+            self._set_selector_channel(self.line_channel_selector, mode.default_channels[0])
         self.line_pass_selector.setCurrentText("trace")
 
     def set_channel_aliases(self, aliases: dict[str, str]) -> None:
@@ -295,6 +295,7 @@ class ChannelImagesModule(QObject):
         selector.blockSignals(True)
         for index in range(selector.count()):
             channel = self._item_channel(selector, index)
+            selector.setItemData(index, channel)
             selector.setItemText(index, self._display_channel_name(channel))
         self._set_selector_channel(selector, current)
         selector.blockSignals(False)

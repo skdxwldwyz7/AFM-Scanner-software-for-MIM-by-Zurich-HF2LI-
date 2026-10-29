@@ -20,6 +20,14 @@ the tested environment can launch with
 The legacy CLI/mock examples below remain for development, not for driving this
 FM-AFM wiring. Verify configured voltage limits and device serial before motion.
 
+## MIM / dual SR830
+
+Select **MIM / FM + dual SR830 X** to extend HF2 FM scanning with two external
+GPIB SR830 X channels (`sr830_I`, `sr830_Q`). The MIM panel replaces the monitor
+with a time constant advisor and measured acquisition timing. Each pixel holds
+XY while reading both instruments; MIM exports include lossless float64 NPZ data
+alongside GSF. See the [MIM setup and timing guide](afm_gui/docs/mim_usage.md).
+
 ## Current Scope
 
 - Dockable PyQt6 GUI for AFM scan control.
@@ -216,8 +224,10 @@ Each mode defines:
 - channel labels and units
 - default enabled state
 
-The current enabled bundled mode is:
+The current enabled bundled modes are:
 
+- `fm_afm` (default)
+- `mim`
 - `lockin`
 
 The `topo`, `spectroscopy`, and `lift` definitions remain in

@@ -23,6 +23,36 @@ modes:
         unit: V
         enabled: true
 
+  mim:
+    enabled: true
+    label: MIM / FM + dual SR830 X
+    default_display_count: 4
+    channels:
+      - name: auxout1
+        label: Aux Out 1 / X
+        unit: V
+        enabled: false
+      - name: auxout2
+        label: Aux Out 2 / Y
+        unit: V
+        enabled: false
+      - name: auxout3
+        label: Aux Out 3 / Z PID output
+        unit: V
+        enabled: true
+      - name: auxout4
+        label: Aux Out 4 / PLL Δf output
+        unit: V
+        enabled: true
+      - name: sr830_I
+        label: MIM I / SR830 X
+        unit: V
+        enabled: true
+      - name: sr830_Q
+        label: MIM Q / SR830 X
+        unit: V
+        enabled: true
+
   topo:
     enabled: false
     label: Topography

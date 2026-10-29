@@ -48,9 +48,9 @@ class CoreSmokeTests(unittest.TestCase):
 
         self.assertEqual(registry.default.name, "fm_afm")
         self.assertEqual(registry.default.default_display_count, 4)
-        self.assertEqual(set(registry.modes), {"fm_afm", "lockin"})
+        self.assertEqual(set(registry.modes), {"fm_afm", "mim", "lockin"})
         self.assertIn("auxout4", registry.default.default_channels)
-        self.assertIn("pll_df", registry.default.default_channels)
+        self.assertEqual(registry.default.default_channels, ("auxout1", "auxout2", "auxout3", "auxout4"))
 
     def test_lockin_scan_mode_uses_lockin_channels(self) -> None:
         registry = load_scan_modes()

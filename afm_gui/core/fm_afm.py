@@ -19,6 +19,7 @@ FM_CHANNELS = (
     FMChannel("auxout4", "Aux Out 4 / PLL Δf output", "V"),
 )
 FM_CHANNEL_BY_KEY = {item.key: item for item in FM_CHANNELS}
+FM_SCAN_MODES = frozenset({"fm_afm", "mim"})
 
 
 class FMAcquisition:
